@@ -1,0 +1,122 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"time"
+)
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func parseConfig() Config {
+	cfg := Config{}
+
+	flag.StringVar(&cfg.Owner, "owner", envOrDefault("AI_AGENT_OWNER", "openperouter"), "GitHub repo owner")
+	flag.StringVar(&cfg.Repo, "repo", envOrDefault("AI_AGENT_REPO", "openperouter"), "GitHub repo name")
+	flag.StringVar(&cfg.Label, "label", envOrDefault("AI_AGENT_LABEL", "good-for-ai"), "Issue label to watch")
+	flag.StringVar(&cfg.CloneDir, "clone-dir", envOrDefault("AI_AGENT_CLONE_DIR", os.ExpandEnv("$HOME/ai-agent-work")), "Clone/worktree directory")
+	flag.StringVar(&cfg.StatePath, "state-path", envOrDefault("AI_AGENT_STATE_PATH", os.ExpandEnv("$HOME/.ai-agent-state.json")), "State file path")
+	flag.DurationVar(&cfg.PollInterval, "poll-interval", parseDuration(envOrDefault("AI_AGENT_POLL_INTERVAL", "2m")), "Poll frequency")
+	flag.StringVar(&cfg.VertexRegion, "vertex-region", os.Getenv("CLOUD_ML_REGION"), "GCP Vertex AI region")
+	flag.StringVar(&cfg.VertexProject, "vertex-project", os.Getenv("ANTHROPIC_VERTEX_PROJECT_ID"), "GCP project ID for Vertex")
+	flag.StringVar(&cfg.LogLevel, "log-level", envOrDefault("AI_AGENT_LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
+	flag.BoolVar(&cfg.DryRun, "dry-run", false, "Log what would be done without executing")
+
+	flag.Parse()
+	return cfg
+}
+
+func parseDuration(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 2 * time.Minute
+	}
+	return d
+}
+
+func setupLogger(level string) *slog.Logger {
+	var logLevel slog.Level
+	switch level {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
+
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+}
+
+func main() {
+	cfg := parseConfig()
+	logger := setupLogger(cfg.LogLevel)
+
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		logger.Error("GITHUB_TOKEN is required")
+		os.Exit(1)
+	}
+
+	if cfg.VertexRegion == "" || cfg.VertexProject == "" {
+		logger.Error("CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID are required")
+		os.Exit(1)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", cfg.Owner, cfg.Repo)
+
+	agent := &Agent{
+		gh:        NewGoGitHubClient(token),
+		runner:    &ExecRunner{},
+		worktrees: NewGitWorktreeManager(&ExecRunner{}, cfg.CloneDir, repoURL),
+		state:     LoadState(cfg.StatePath),
+		cfg:       cfg,
+		logger:    logger,
+	}
+
+	logger.Info("starting ai-agent",
+		"owner", cfg.Owner,
+		"repo", cfg.Repo,
+		"label", cfg.Label,
+		"poll-interval", cfg.PollInterval,
+		"dry-run", cfg.DryRun,
+	)
+
+	ticker := time.NewTicker(cfg.PollInterval)
+	defer ticker.Stop()
+
+	// Run once immediately, then on tick
+	runLoop(ctx, agent, logger)
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("shutting down")
+			return
+		case <-ticker.C:
+			runLoop(ctx, agent, logger)
+		}
+	}
+}
+
+func runLoop(ctx context.Context, agent *Agent, logger *slog.Logger) {
+	logger.Debug("starting poll cycle")
+	agent.ProcessNewIssues(ctx)
+	agent.ProcessReviewComments(ctx)
+	agent.CleanupDone(ctx)
+	logger.Debug("poll cycle complete")
+}
