@@ -49,7 +49,9 @@ func (g *GitWorktreeManager) EnsureRepoCloned(ctx context.Context) error {
 func (g *GitWorktreeManager) CreateWorktree(ctx context.Context, branchName string) (string, error) {
 	worktreePath := filepath.Join(g.cloneDir, "worktrees", branchName)
 
-	// Delete existing branch if it exists (from a previous failed attempt)
+	// Clean up from a previous failed attempt
+	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "remove", "--force", worktreePath)
+	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "prune")
 	g.runner.Run(ctx, g.cloneDir, "git", "branch", "-D", branchName)
 
 	_, stderr, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "add", "-b", branchName, worktreePath, "origin/main")
