@@ -61,7 +61,7 @@ func TestBuildReviewResponsePrompt(t *testing.T) {
 		},
 	}
 
-	prompt := buildReviewResponsePrompt(work, comments, "")
+	prompt := buildReviewResponsePrompt(work, comments, "", "owner", "repo")
 
 	checks := []string{
 		"reviewer1",
@@ -72,6 +72,10 @@ func TestBuildReviewResponsePrompt(t *testing.T) {
 		"handler_test.go",
 		"line 30",
 		"Missing test case for empty input",
+		"owner/repo",
+		"comment ID: 1",
+		"comment ID: 2",
+		"pulls/comments/COMMENT_ID/replies",
 	}
 
 	for _, want := range checks {

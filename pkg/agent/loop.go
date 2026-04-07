@@ -146,7 +146,7 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 			}
 		}
 
-		prompt := buildReviewResponsePrompt(*work, humanComments, a.cfg.SignedOffBy)
+		prompt := buildReviewResponsePrompt(*work, humanComments, a.cfg.SignedOffBy, a.cfg.Owner, a.cfg.Repo)
 		_, err = runClaude(ctx, a.runner, work.WorktreePath, prompt, a.cfg)
 		if err != nil {
 			a.logger.Error("claude failed to address review", "pr", work.PRNumber, "error", err)

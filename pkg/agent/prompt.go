@@ -27,14 +27,15 @@ Do not merge the PR. Only create it.`,
 		issue.Number, issue.Title, issue.Body, issue.Number, signoff)
 }
 
-func buildReviewResponsePrompt(work IssueWork, comments []ReviewComment, signedOffBy string) string {
+func buildReviewResponsePrompt(work IssueWork, comments []ReviewComment, signedOffBy, owner, repo string) string {
 	prompt := fmt.Sprintf(`You are addressing review comments on PR #%d for issue #%d: %s
+Repository: %s/%s
 
 Review comments to address:
-`, work.PRNumber, work.IssueNumber, work.IssueTitle)
+`, work.PRNumber, work.IssueNumber, work.IssueTitle, owner, repo)
 
 	for _, c := range comments {
-		prompt += fmt.Sprintf("\n--- Comment by %s", c.User)
+		prompt += fmt.Sprintf("\n--- Comment by %s (comment ID: %d)", c.User, c.ID)
 		if c.Path != "" {
 			prompt += fmt.Sprintf(" on file %s", c.Path)
 			if c.Line > 0 {
@@ -44,16 +45,17 @@ Review comments to address:
 		prompt += fmt.Sprintf(" ---\n%s\n", c.Body)
 	}
 
-	prompt += `
+	prompt += fmt.Sprintf(`
 Instructions:
 1. For each review comment above:
    - If the suggestion is valid, implement it and reply to the comment explaining what you changed
    - If the suggestion does not make sense or would break things, reply to the comment explaining why you disagree and do not implement it
    - Always reply to every comment, even if you agree and are implementing the change
-2. Reply to comments using "gh pr review" or "gh api" to post responses on the PR
+2. Reply to each comment using this command (replace COMMENT_ID and BODY):
+   gh api repos/%s/%s/pulls/comments/COMMENT_ID/replies -f body="BODY"
 3. Run "make lint" and "make test" to verify your changes
 4. Commit and push your changes
-5. Do not force-push`
+5. Do not force-push`, owner, repo)
 
 	if signedOffBy != "" {
 		prompt += fmt.Sprintf("\n6. Add \"Signed-off-by: %s\" to every commit message", signedOffBy)
