@@ -167,13 +167,14 @@ func initBareRepo(t *testing.T) string {
 	bareDir := filepath.Join(base, "repo.git")
 	cloneDir := filepath.Join(base, "clone")
 
-	// Create bare repo
-	run(t, "", "git", "init", "--bare", bareDir)
+	// Create bare repo with main as default branch
+	run(t, "", "git", "init", "--bare", "--initial-branch=main", bareDir)
 
 	// Clone it, add an initial commit so origin/main exists
 	run(t, "", "git", "clone", bareDir, cloneDir)
 	run(t, cloneDir, "git", "config", "user.email", "test@test.com")
 	run(t, cloneDir, "git", "config", "user.name", "Test")
+	run(t, cloneDir, "git", "checkout", "-b", "main")
 
 	// Create initial commit
 	readme := filepath.Join(cloneDir, "README.md")
