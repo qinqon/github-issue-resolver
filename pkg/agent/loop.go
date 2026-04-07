@@ -188,7 +188,13 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
-		runs, err := a.gh.GetCheckRuns(ctx, a.cfg.Owner, a.cfg.Repo, work.BranchName)
+		headSHA, err := a.gh.GetPRHeadSHA(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+		if err != nil {
+			a.logger.Error("failed to get PR head SHA", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		runs, err := a.gh.GetCheckRuns(ctx, a.cfg.Owner, a.cfg.Repo, headSHA)
 		if err != nil {
 			a.logger.Error("failed to get check runs", "pr", work.PRNumber, "error", err)
 			continue

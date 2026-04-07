@@ -84,6 +84,10 @@ func (m *mockGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int6
 	return "", nil
 }
 
+func (m *mockGitHubClient) GetPRHeadSHA(_ context.Context, _, _ string, _ int) (string, error) {
+	return "abc123", nil
+}
+
 // mockWorktreeManager implements WorktreeManager for testing.
 type mockWorktreeManager struct {
 	createdBranches []string

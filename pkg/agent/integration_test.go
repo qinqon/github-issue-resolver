@@ -177,6 +177,10 @@ func (f *fakeGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int6
 	return "", nil
 }
 
+func (f *fakeGitHubClient) GetPRHeadSHA(_ context.Context, _, _ string, _ int) (string, error) {
+	return "fakesha123", nil
+}
+
 // initBareRepo creates a bare repo and a working clone for the agent to use.
 // Returns (cloneDir, cleanup).
 func initBareRepo(t *testing.T) string {
@@ -605,7 +609,7 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	}
 
 	// CI fails
-	gh.setCheckRuns("ai/issue-77", []CheckRun{
+	gh.setCheckRuns("fakesha123", []CheckRun{
 		{ID: 1, Name: "test", Status: "completed", Conclusion: "failure", Output: "test failed: expected 1 got 2"},
 	})
 
@@ -661,7 +665,7 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	}
 
 	// CI passes — verify it's detected
-	gh.setCheckRuns("ai/issue-77", []CheckRun{
+	gh.setCheckRuns("fakesha123", []CheckRun{
 		{ID: 2, Name: "test", Status: "completed", Conclusion: "success"},
 	})
 	// Reset attempts to simulate a fresh state after human fix
