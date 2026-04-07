@@ -8,7 +8,6 @@ type Config struct {
 	Repo          string
 	Label         string
 	CloneDir      string
-	StatePath     string
 	PollInterval  time.Duration
 	VertexRegion  string
 	VertexProject string

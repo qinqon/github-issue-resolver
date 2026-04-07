@@ -119,12 +119,9 @@ func newTestAgent(gh *mockGitHubClient, runner *mockCommandRunner, wt *mockWorkt
 		gh:        gh,
 		runner:    runner,
 		worktrees: wt,
-		state: &State{
-			ActiveIssues: make(map[int]*IssueWork),
-			path:         "/dev/null",
-		},
-		cfg:    Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
-		logger: slog.Default(),
+		state:     NewState(),
+		cfg:       Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
+		logger:    slog.Default(),
 	}
 }
 

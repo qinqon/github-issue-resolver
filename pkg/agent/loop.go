@@ -46,9 +46,6 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 					work.PRNumber = prs[0].Number
 					work.Status = "pr-open"
 					a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
-					if err := a.state.Save(); err != nil {
-						a.logger.Error("failed to save state", "error", err)
-					}
 				}
 			}
 			a.logger.Debug("skipping already tracked issue", "issue", issue.Number)
@@ -89,10 +86,6 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
 				fmt.Sprintf("AI agent failed to implement this issue: %v", err))
-
-			if err := a.state.Save(); err != nil {
-				a.logger.Error("failed to save state", "error", err)
-			}
 			continue
 		}
 
@@ -106,9 +99,6 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 		}
 
 		a.state.ActiveIssues[issue.Number] = work
-		if err := a.state.Save(); err != nil {
-			a.logger.Error("failed to save state", "error", err)
-		}
 	}
 }
 
@@ -159,10 +149,6 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 				work.LastCommentID = c.ID
 			}
 		}
-
-		if err := a.state.Save(); err != nil {
-			a.logger.Error("failed to save state", "error", err)
-		}
 	}
 }
 
@@ -181,9 +167,6 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.IssueNumber,
 					fmt.Sprintf("CI is still failing after %d fix attempts on PR #%d. Human intervention needed.", maxCIFixAttempts, work.PRNumber))
 				work.LastCIStatus = "max-retries-reached"
-				if err := a.state.Save(); err != nil {
-					a.logger.Error("failed to save state", "error", err)
-				}
 			}
 			continue
 		}
@@ -221,9 +204,6 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			if work.LastCIStatus != "success" {
 				a.logger.Info("CI passing", "pr", work.PRNumber)
 				work.LastCIStatus = "success"
-				if err := a.state.Save(); err != nil {
-					a.logger.Error("failed to save state", "error", err)
-				}
 			}
 			continue
 		}
@@ -238,10 +218,6 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 		work.CIFixAttempts++
 		work.LastCIStatus = "failure"
-
-		if err := a.state.Save(); err != nil {
-			a.logger.Error("failed to save state", "error", err)
-		}
 	}
 }
 
@@ -269,10 +245,6 @@ func (a *Agent) CleanupDone(ctx context.Context) {
 		}
 
 		delete(a.state.ActiveIssues, issueNum)
-
-		if err := a.state.Save(); err != nil {
-			a.logger.Error("failed to save state", "error", err)
-		}
 	}
 }
 

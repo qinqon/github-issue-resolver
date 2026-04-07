@@ -27,7 +27,6 @@ func parseConfig() agent.Config {
 	flag.StringVar(&cfg.Repo, "repo", envOrDefault("AI_AGENT_REPO", "openperouter"), "GitHub repo name")
 	flag.StringVar(&cfg.Label, "label", envOrDefault("AI_AGENT_LABEL", "good-for-ai"), "Issue label to watch")
 	flag.StringVar(&cfg.CloneDir, "clone-dir", envOrDefault("AI_AGENT_CLONE_DIR", os.ExpandEnv("$HOME/ai-agent-work")), "Clone/worktree directory")
-	flag.StringVar(&cfg.StatePath, "state-path", envOrDefault("AI_AGENT_STATE_PATH", os.ExpandEnv("$HOME/.ai-agent-state.json")), "State file path")
 	flag.DurationVar(&cfg.PollInterval, "poll-interval", parseDuration(envOrDefault("AI_AGENT_POLL_INTERVAL", "2m")), "Poll frequency")
 	flag.StringVar(&cfg.VertexRegion, "vertex-region", os.Getenv("CLOUD_ML_REGION"), "GCP Vertex AI region")
 	flag.StringVar(&cfg.VertexProject, "vertex-project", os.Getenv("ANTHROPIC_VERTEX_PROJECT_ID"), "GCP project ID for Vertex")
@@ -92,8 +91,8 @@ func main() {
 	}
 
 	// Default signed-off-by to the authenticated GitHub user
+	ghClient := agent.NewGoGitHubClient(token)
 	if cfg.SignedOffBy == "" {
-		ghClient := agent.NewGoGitHubClient(token)
 		if name, email, err := ghClient.GetAuthenticatedUser(context.Background()); err == nil {
 			cfg.SignedOffBy = fmt.Sprintf("%s <%s>", name, email)
 			logger.Info("using GitHub user for signed-off-by", "signed-off-by", cfg.SignedOffBy)
@@ -105,14 +104,19 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	// Build initial state from GitHub
+	logger.Info("rebuilding state from GitHub...")
+	state := agent.BuildStateFromGitHub(ctx, ghClient, cfg, cfg.CloneDir, logger)
+	logger.Info("state rebuilt", "active-issues", len(state.ActiveIssues))
+
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", cfg.Owner, cfg.Repo)
 	runner := &agent.ExecRunner{}
 
 	a := agent.NewAgent(
-		agent.NewGoGitHubClient(token),
+		ghClient,
 		runner,
 		agent.NewGitWorktreeManager(runner, cfg.CloneDir, repoURL),
-		agent.LoadState(cfg.StatePath),
+		state,
 		cfg,
 		logger,
 	)

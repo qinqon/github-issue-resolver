@@ -274,8 +274,6 @@ func (f *fakeClaudeRunner) Run(_ context.Context, workDir string, name string, a
 func TestIntegration_FullIssueLifecycle(t *testing.T) {
 	ctx := context.Background()
 	cloneDir := initBareRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-
 	gh := newFakeGitHub()
 	ghClient := &fakeGitHubClient{state: gh}
 	runner := &fakeClaudeRunner{}
@@ -288,7 +286,7 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 		ghClient,
 		runner,
 		wtManager,
-		LoadState(statePath),
+		NewState(),
 		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
 		slog.Default(),
 	)
@@ -399,8 +397,6 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 func TestIntegration_ClaudeFailure(t *testing.T) {
 	ctx := context.Background()
 	cloneDir := initBareRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-
 	gh := newFakeGitHub()
 	ghClient := &fakeGitHubClient{state: gh}
 	runner := &fakeClaudeRunner{err: fmt.Errorf("claude crashed")}
@@ -412,7 +408,7 @@ func TestIntegration_ClaudeFailure(t *testing.T) {
 		ghClient,
 		runner,
 		wtManager,
-		LoadState(statePath),
+		NewState(),
 		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
 		slog.Default(),
 	)
@@ -455,8 +451,6 @@ func TestIntegration_ClaudeFailure(t *testing.T) {
 func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 	ctx := context.Background()
 	cloneDir := initBareRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-
 	gh := newFakeGitHub()
 	ghClient := &fakeGitHubClient{state: gh}
 	runner := &fakeClaudeRunner{}
@@ -468,7 +462,7 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 		ghClient,
 		runner,
 		wtManager,
-		LoadState(statePath),
+		NewState(),
 		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
 		slog.Default(),
 	)
@@ -511,8 +505,6 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 func TestIntegration_ReviewerWhitelist(t *testing.T) {
 	ctx := context.Background()
 	cloneDir := initBareRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-
 	gh := newFakeGitHub()
 	ghClient := &fakeGitHubClient{state: gh}
 	runner := &fakeClaudeRunner{}
@@ -524,7 +516,7 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 		ghClient,
 		runner,
 		wtManager,
-		LoadState(statePath),
+		NewState(),
 		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai", Reviewers: []string{"trusted-user"}},
 		slog.Default(),
 	)
@@ -578,8 +570,6 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	ctx := context.Background()
 	cloneDir := initBareRepo(t)
-	statePath := filepath.Join(t.TempDir(), "state.json")
-
 	gh := newFakeGitHub()
 	ghClient := &fakeGitHubClient{state: gh}
 	runner := &fakeClaudeRunner{}
@@ -591,7 +581,7 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 		ghClient,
 		runner,
 		wtManager,
-		LoadState(statePath),
+		NewState(),
 		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
 		slog.Default(),
 	)
