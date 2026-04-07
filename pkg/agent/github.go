@@ -17,6 +17,7 @@ type GitHubClient interface {
 	AddLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error
 	RemoveLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error
 	ListPRsByHead(ctx context.Context, owner, repo, branch string) ([]PR, error)
+	AddPRCommentReaction(ctx context.Context, owner, repo string, commentID int64, reaction string) error
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -160,6 +161,14 @@ func (g *GoGitHubClient) ListPRsByHead(ctx context.Context, owner, repo, branch 
 		})
 	}
 	return prs, nil
+}
+
+func (g *GoGitHubClient) AddPRCommentReaction(ctx context.Context, owner, repo string, commentID int64, reaction string) error {
+	_, _, err := g.client.Reactions.CreatePullRequestCommentReaction(ctx, owner, repo, commentID, reaction)
+	if err != nil {
+		return fmt.Errorf("adding reaction: %w", err)
+	}
+	return nil
 }
 
 // GetAuthenticatedUser returns the name and email of the authenticated user.

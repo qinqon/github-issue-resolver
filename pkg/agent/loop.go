@@ -139,6 +139,13 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 
 		a.logger.Info("addressing review comments", "pr", work.PRNumber, "count", len(humanComments))
 
+		// React with eyes to signal we're processing
+		for _, c := range humanComments {
+			if err := a.gh.AddPRCommentReaction(ctx, a.cfg.Owner, a.cfg.Repo, c.ID, "eyes"); err != nil {
+				a.logger.Warn("failed to add reaction", "comment", c.ID, "error", err)
+			}
+		}
+
 		prompt := buildReviewResponsePrompt(*work, humanComments, a.cfg.SignedOffBy)
 		_, err = runClaude(ctx, a.runner, work.WorktreePath, prompt, a.cfg)
 		if err != nil {

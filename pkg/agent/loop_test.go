@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"testing"
 )
@@ -14,9 +15,10 @@ type mockGitHubClient struct {
 	issueComments []ReviewComment
 	prState       string
 	prs           []PR
-	addedComments []string
-	addedLabels   []string
-	removedLabels []string
+	addedComments  []string
+	addedLabels    []string
+	removedLabels  []string
+	addedReactions []string
 
 	listIssuesErr error
 }
@@ -66,6 +68,11 @@ func (m *mockGitHubClient) RemoveLabel(_ context.Context, _, _ string, _ int, la
 
 func (m *mockGitHubClient) ListPRsByHead(_ context.Context, _, _, _ string) ([]PR, error) {
 	return m.prs, nil
+}
+
+func (m *mockGitHubClient) AddPRCommentReaction(_ context.Context, _, _ string, commentID int64, reaction string) error {
+	m.addedReactions = append(m.addedReactions, fmt.Sprintf("%d:%s", commentID, reaction))
+	return nil
 }
 
 // mockWorktreeManager implements WorktreeManager for testing.
