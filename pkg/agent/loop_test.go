@@ -128,6 +128,39 @@ func TestProcessNewIssues_SkipsAlreadyTracked(t *testing.T) {
 	}
 }
 
+func TestProcessNewIssues_RechecksForPR(t *testing.T) {
+	gh := &mockGitHubClient{
+		issues: []Issue{{Number: 42, Title: "Fix bug"}},
+		prs:    []PR{{Number: 100, State: "open", Head: "ai/issue-42"}},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber: 42,
+		BranchName:  "ai/issue-42",
+		Status:      "implementing",
+		PRNumber:    0,
+	}
+
+	agent.ProcessNewIssues(context.Background())
+
+	// Should not re-run claude
+	if len(runner.calls) != 0 {
+		t.Error("should not invoke claude for already tracked issue")
+	}
+
+	// Should have found the PR
+	work := agent.state.ActiveIssues[42]
+	if work.PRNumber != 100 {
+		t.Errorf("expected PRNumber 100, got %d", work.PRNumber)
+	}
+	if work.Status != "pr-open" {
+		t.Errorf("expected status 'pr-open', got %q", work.Status)
+	}
+}
+
 func TestProcessNewIssues_HappyPath(t *testing.T) {
 	claudeResult, _ := json.Marshal(ClaudeResult{Result: "Fixed it"})
 	gh := &mockGitHubClient{

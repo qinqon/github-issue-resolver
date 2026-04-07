@@ -38,7 +38,19 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 	}
 
 	for _, issue := range issues {
-		if _, exists := a.state.ActiveIssues[issue.Number]; exists {
+		if work, exists := a.state.ActiveIssues[issue.Number]; exists {
+			// Re-check for PR if we lost track of it
+			if work.PRNumber == 0 && work.Status == "implementing" {
+				prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, work.BranchName)
+				if err == nil && len(prs) > 0 {
+					work.PRNumber = prs[0].Number
+					work.Status = "pr-open"
+					a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
+					if err := a.state.Save(); err != nil {
+						a.logger.Error("failed to save state", "error", err)
+					}
+				}
+			}
 			a.logger.Debug("skipping already tracked issue", "issue", issue.Number)
 			continue
 		}
