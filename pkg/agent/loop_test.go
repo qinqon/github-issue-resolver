@@ -19,6 +19,7 @@ type mockGitHubClient struct {
 	addedLabels    []string
 	removedLabels  []string
 	addedReactions []string
+	checkRuns      []CheckRun
 
 	listIssuesErr error
 }
@@ -73,6 +74,14 @@ func (m *mockGitHubClient) ListPRsByHead(_ context.Context, _, _, _ string) ([]P
 func (m *mockGitHubClient) AddPRCommentReaction(_ context.Context, _, _ string, commentID int64, reaction string) error {
 	m.addedReactions = append(m.addedReactions, fmt.Sprintf("%d:%s", commentID, reaction))
 	return nil
+}
+
+func (m *mockGitHubClient) GetCheckRuns(_ context.Context, _, _, _ string) ([]CheckRun, error) {
+	return m.checkRuns, nil
+}
+
+func (m *mockGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int64) (string, error) {
+	return "", nil
 }
 
 // mockWorktreeManager implements WorktreeManager for testing.
@@ -389,5 +398,112 @@ func TestCleanupDone_OpenPR(t *testing.T) {
 	}
 	if _, exists := agent.state.ActiveIssues[42]; !exists {
 		t.Error("should not remove open PR from state")
+	}
+}
+
+func TestProcessCIFailures_FixesFailingCI(t *testing.T) {
+	claudeResult, _ := json.Marshal(ClaudeResult{Result: "Fixed CI"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "test", Status: "completed", Conclusion: "failure", Output: "tests failed"},
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 claude call, got %d", len(runner.calls))
+	}
+	if agent.state.ActiveIssues[42].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[42].CIFixAttempts)
+	}
+}
+
+func TestProcessCIFailures_SkipsPassingCI(t *testing.T) {
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "test", Status: "completed", Conclusion: "success"},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber: 42,
+		PRNumber:    100,
+		BranchName:  "ai/issue-42",
+		Status:      "pr-open",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	if len(runner.calls) != 0 {
+		t.Error("should not invoke claude when CI passes")
+	}
+}
+
+func TestProcessCIFailures_StopsAfterMaxRetries(t *testing.T) {
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "test", Status: "completed", Conclusion: "failure"},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:   42,
+		IssueTitle:    "Fix bug",
+		PRNumber:      100,
+		BranchName:    "ai/issue-42",
+		Status:        "pr-open",
+		CIFixAttempts: 3,
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	if len(runner.calls) != 0 {
+		t.Error("should not invoke claude after max retries")
+	}
+	if len(gh.addedComments) != 1 {
+		t.Error("expected comment about max retries")
+	}
+}
+
+func TestProcessCIFailures_SkipsPendingCI(t *testing.T) {
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "test", Status: "in_progress", Conclusion: ""},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber: 42,
+		PRNumber:    100,
+		BranchName:  "ai/issue-42",
+		Status:      "pr-open",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	if len(runner.calls) != 0 {
+		t.Error("should not invoke claude while CI is still running")
 	}
 }

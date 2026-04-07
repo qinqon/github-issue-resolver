@@ -63,3 +63,31 @@ Instructions:
 
 	return prompt
 }
+
+func buildCIFixPrompt(work IssueWork, failures []CheckRun, signedOffBy string) string {
+	prompt := fmt.Sprintf(`CI is failing on PR #%d for issue #%d: %s
+
+Failed checks:
+`, work.PRNumber, work.IssueNumber, work.IssueTitle)
+
+	for _, f := range failures {
+		prompt += fmt.Sprintf("\n--- Check: %s (conclusion: %s) ---\n", f.Name, f.Conclusion)
+		if f.Output != "" {
+			prompt += f.Output + "\n"
+		}
+	}
+
+	prompt += `
+Instructions:
+1. Investigate the CI failures above
+2. Fix the code so that CI passes
+3. Run "make lint" and "make test" locally to verify
+4. Commit and push your changes
+5. Do not force-push`
+
+	if signedOffBy != "" {
+		prompt += fmt.Sprintf("\n6. Add \"Signed-off-by: %s\" to every commit message", signedOffBy)
+	}
+
+	return prompt
+}

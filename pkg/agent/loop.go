@@ -166,6 +166,79 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 	}
 }
 
+const maxCIFixAttempts = 3
+
+// ProcessCIFailures checks CI status for open PRs and invokes Claude to fix failures.
+func (a *Agent) ProcessCIFailures(ctx context.Context) {
+	for _, work := range a.state.ActiveIssues {
+		if work.PRNumber == 0 || work.Status != "pr-open" {
+			continue
+		}
+
+		if work.CIFixAttempts >= maxCIFixAttempts {
+			if work.LastCIStatus != "max-retries-reached" {
+				a.logger.Warn("CI fix attempts exhausted", "pr", work.PRNumber, "attempts", work.CIFixAttempts)
+				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.IssueNumber,
+					fmt.Sprintf("CI is still failing after %d fix attempts on PR #%d. Human intervention needed.", maxCIFixAttempts, work.PRNumber))
+				work.LastCIStatus = "max-retries-reached"
+				if err := a.state.Save(); err != nil {
+					a.logger.Error("failed to save state", "error", err)
+				}
+			}
+			continue
+		}
+
+		runs, err := a.gh.GetCheckRuns(ctx, a.cfg.Owner, a.cfg.Repo, work.BranchName)
+		if err != nil {
+			a.logger.Error("failed to get check runs", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		// Check if all checks are completed
+		allCompleted := true
+		var failures []CheckRun
+		for _, r := range runs {
+			if r.Status != "completed" {
+				allCompleted = false
+				break
+			}
+			if r.Conclusion == "failure" {
+				failures = append(failures, r)
+			}
+		}
+
+		if !allCompleted || len(runs) == 0 {
+			continue
+		}
+
+		if len(failures) == 0 {
+			if work.LastCIStatus != "success" {
+				a.logger.Info("CI passing", "pr", work.PRNumber)
+				work.LastCIStatus = "success"
+				if err := a.state.Save(); err != nil {
+					a.logger.Error("failed to save state", "error", err)
+				}
+			}
+			continue
+		}
+
+		a.logger.Info("CI failing, invoking Claude to fix", "pr", work.PRNumber, "failures", len(failures), "attempt", work.CIFixAttempts+1)
+
+		prompt := buildCIFixPrompt(*work, failures, a.cfg.SignedOffBy)
+		_, err = runClaude(ctx, a.runner, work.WorktreePath, prompt, a.cfg)
+		if err != nil {
+			a.logger.Error("claude failed to fix CI", "pr", work.PRNumber, "error", err)
+		}
+
+		work.CIFixAttempts++
+		work.LastCIStatus = "failure"
+
+		if err := a.state.Save(); err != nil {
+			a.logger.Error("failed to save state", "error", err)
+		}
+	}
+}
+
 // CleanupDone removes worktrees for merged or closed PRs.
 func (a *Agent) CleanupDone(ctx context.Context) {
 	for issueNum, work := range a.state.ActiveIssues {

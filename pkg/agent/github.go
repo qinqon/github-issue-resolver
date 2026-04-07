@@ -18,6 +18,8 @@ type GitHubClient interface {
 	RemoveLabel(ctx context.Context, owner, repo string, issueNumber int, label string) error
 	ListPRsByHead(ctx context.Context, owner, repo, branch string) ([]PR, error)
 	AddPRCommentReaction(ctx context.Context, owner, repo string, commentID int64, reaction string) error
+	GetCheckRuns(ctx context.Context, owner, repo, ref string) ([]CheckRun, error)
+	GetCheckRunLog(ctx context.Context, owner, repo string, checkRunID int64) (string, error)
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -169,6 +171,46 @@ func (g *GoGitHubClient) AddPRCommentReaction(ctx context.Context, owner, repo s
 		return fmt.Errorf("adding reaction: %w", err)
 	}
 	return nil
+}
+
+func (g *GoGitHubClient) GetCheckRuns(ctx context.Context, owner, repo, ref string) ([]CheckRun, error) {
+	result, _, err := g.client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing check runs: %w", err)
+	}
+
+	var runs []CheckRun
+	for _, r := range result.CheckRuns {
+		var output string
+		if r.Output != nil {
+			output = r.Output.GetText()
+			if output == "" {
+				output = r.Output.GetSummary()
+			}
+		}
+		runs = append(runs, CheckRun{
+			ID:         r.GetID(),
+			Name:       r.GetName(),
+			Status:     r.GetStatus(),
+			Conclusion: r.GetConclusion(),
+			Output:     output,
+		})
+	}
+	return runs, nil
+}
+
+func (g *GoGitHubClient) GetCheckRunLog(ctx context.Context, owner, repo string, checkRunID int64) (string, error) {
+	// Get check run annotations which contain failure details
+	annotations, _, err := g.client.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
+	if err != nil {
+		return "", fmt.Errorf("listing annotations: %w", err)
+	}
+
+	var log string
+	for _, a := range annotations {
+		log += fmt.Sprintf("%s:%d: %s - %s\n", a.GetPath(), a.GetStartLine(), a.GetAnnotationLevel(), a.GetMessage())
+	}
+	return log, nil
 }
 
 // GetAuthenticatedUser returns the name and email of the authenticated user.

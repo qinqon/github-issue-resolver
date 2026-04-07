@@ -23,6 +23,7 @@ type fakeGitHub struct {
 	addedLabels    []string
 	removedLabels  []string
 	reactions      []string
+	checkRuns      map[string][]CheckRun // ref -> check runs
 	nextPRNumber   int
 	nextCommentID  int64
 }
@@ -31,6 +32,7 @@ func newFakeGitHub() *fakeGitHub {
 	return &fakeGitHub{
 		prs:           make(map[int]*PR),
 		prComments:    make(map[int][]ReviewComment),
+		checkRuns:     make(map[string][]CheckRun),
 		nextPRNumber:  100,
 		nextCommentID: 1000,
 	}
@@ -68,6 +70,12 @@ func (f *fakeGitHub) closePR(prNumber int) {
 	if pr, ok := f.prs[prNumber]; ok {
 		pr.State = "closed"
 	}
+}
+
+func (f *fakeGitHub) setCheckRuns(ref string, runs []CheckRun) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checkRuns[ref] = runs
 }
 
 func (f *fakeGitHub) mergePR(prNumber int) {
@@ -157,6 +165,16 @@ func (f *fakeGitHubClient) AddPRCommentReaction(_ context.Context, _, _ string, 
 	defer f.state.mu.Unlock()
 	f.state.reactions = append(f.state.reactions, fmt.Sprintf("%d:%s", commentID, reaction))
 	return nil
+}
+
+func (f *fakeGitHubClient) GetCheckRuns(_ context.Context, _, _, ref string) ([]CheckRun, error) {
+	f.state.mu.Lock()
+	defer f.state.mu.Unlock()
+	return append([]CheckRun{}, f.state.checkRuns[ref]...), nil
+}
+
+func (f *fakeGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int64) (string, error) {
+	return "", nil
 }
 
 // initBareRepo creates a bare repo and a working clone for the agent to use.
@@ -550,6 +568,110 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 
 	if claudeCallsAfter != 1 {
 		t.Errorf("expected 1 claude call for whitelisted reviewer, got %d", claudeCallsAfter)
+	}
+}
+
+func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
+	ctx := context.Background()
+	cloneDir := initBareRepo(t)
+	statePath := filepath.Join(t.TempDir(), "state.json")
+
+	gh := newFakeGitHub()
+	ghClient := &fakeGitHubClient{state: gh}
+	runner := &fakeClaudeRunner{}
+
+	bareDir := filepath.Join(filepath.Dir(cloneDir), "repo.git")
+	wtManager := NewGitWorktreeManager(&ExecRunner{}, cloneDir, bareDir)
+
+	agent := NewAgent(
+		ghClient,
+		runner,
+		wtManager,
+		LoadState(statePath),
+		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
+		slog.Default(),
+	)
+
+	// Setup: issue with open PR
+	gh.addIssue(Issue{Number: 77, Title: "Add feature", Body: "new feature"})
+	gh.addPR("ai/issue-77")
+
+	agent.CleanupDone(ctx)
+	agent.ProcessNewIssues(ctx)
+
+	work := agent.state.ActiveIssues[77]
+	if work == nil {
+		t.Fatal("issue 77 should be in state")
+	}
+
+	// CI fails
+	gh.setCheckRuns("ai/issue-77", []CheckRun{
+		{ID: 1, Name: "test", Status: "completed", Conclusion: "failure", Output: "test failed: expected 1 got 2"},
+	})
+
+	// First fix attempt
+	agent.ProcessCIFailures(ctx)
+	if agent.state.ActiveIssues[77].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	}
+
+	// CI still fails — second attempt
+	agent.ProcessCIFailures(ctx)
+	if agent.state.ActiveIssues[77].CIFixAttempts != 2 {
+		t.Errorf("expected 2 CI fix attempts, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	}
+
+	// CI still fails — third attempt
+	agent.ProcessCIFailures(ctx)
+	if agent.state.ActiveIssues[77].CIFixAttempts != 3 {
+		t.Errorf("expected 3 CI fix attempts, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	}
+
+	// Fourth attempt — should be blocked, comment posted
+	runner.mu.Lock()
+	callsBefore := len(runner.calls)
+	runner.mu.Unlock()
+
+	agent.ProcessCIFailures(ctx)
+
+	runner.mu.Lock()
+	newCalls := 0
+	for i := callsBefore; i < len(runner.calls); i++ {
+		if runner.calls[i].Name == "claude" {
+			newCalls++
+		}
+	}
+	runner.mu.Unlock()
+
+	if newCalls != 0 {
+		t.Error("should not invoke claude after max retries")
+	}
+
+	gh.mu.Lock()
+	hasComment := false
+	for _, c := range gh.postedComments {
+		if strings.Contains(c, "3 fix attempts") {
+			hasComment = true
+		}
+	}
+	gh.mu.Unlock()
+
+	if !hasComment {
+		t.Error("expected comment about exhausted CI fix attempts")
+	}
+
+	// CI passes — verify it's detected
+	gh.setCheckRuns("ai/issue-77", []CheckRun{
+		{ID: 2, Name: "test", Status: "completed", Conclusion: "success"},
+	})
+	// Reset attempts to simulate a fresh state after human fix
+	agent.state.ActiveIssues[77].CIFixAttempts = 0
+	agent.state.ActiveIssues[77].LastCIStatus = ""
+
+	agent.ProcessCIFailures(ctx)
+
+	if agent.state.ActiveIssues[77].LastCIStatus != "success" {
+		t.Errorf("expected CI status 'success', got %q", agent.state.ActiveIssues[77].LastCIStatus)
 	}
 }
 
