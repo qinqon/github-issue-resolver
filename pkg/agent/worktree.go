@@ -32,16 +32,16 @@ func NewGitWorktreeManager(runner CommandRunner, cloneDir, repoURL string) *GitW
 
 func (g *GitWorktreeManager) EnsureRepoCloned(ctx context.Context) error {
 	if _, err := os.Stat(filepath.Join(g.cloneDir, ".git")); err == nil {
-		_, _, err := g.runner.Run(ctx, g.cloneDir, "git", "fetch", "origin")
+		_, stderr, err := g.runner.Run(ctx, g.cloneDir, "git", "fetch", "origin")
 		if err != nil {
-			return fmt.Errorf("git fetch: %w", err)
+			return fmt.Errorf("git fetch: %w (stderr: %s)", err, string(stderr))
 		}
 		return nil
 	}
 
-	_, _, err := g.runner.Run(ctx, "", "git", "clone", g.repoURL, g.cloneDir)
+	_, stderr, err := g.runner.Run(ctx, "", "git", "clone", g.repoURL, g.cloneDir)
 	if err != nil {
-		return fmt.Errorf("git clone: %w", err)
+		return fmt.Errorf("git clone: %w (stderr: %s)", err, string(stderr))
 	}
 	return nil
 }
@@ -49,18 +49,21 @@ func (g *GitWorktreeManager) EnsureRepoCloned(ctx context.Context) error {
 func (g *GitWorktreeManager) CreateWorktree(ctx context.Context, branchName string) (string, error) {
 	worktreePath := filepath.Join(g.cloneDir, "worktrees", branchName)
 
-	_, _, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "add", "-b", branchName, worktreePath, "origin/main")
+	// Delete existing branch if it exists (from a previous failed attempt)
+	g.runner.Run(ctx, g.cloneDir, "git", "branch", "-D", branchName)
+
+	_, stderr, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "add", "-b", branchName, worktreePath, "origin/main")
 	if err != nil {
-		return "", fmt.Errorf("git worktree add: %w", err)
+		return "", fmt.Errorf("git worktree add: %w (stderr: %s)", err, string(stderr))
 	}
 
 	return worktreePath, nil
 }
 
 func (g *GitWorktreeManager) RemoveWorktree(ctx context.Context, worktreePath string) error {
-	_, _, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "remove", "--force", worktreePath)
+	_, stderr, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "remove", "--force", worktreePath)
 	if err != nil {
-		return fmt.Errorf("git worktree remove: %w", err)
+		return fmt.Errorf("git worktree remove: %w (stderr: %s)", err, string(stderr))
 	}
 	return nil
 }

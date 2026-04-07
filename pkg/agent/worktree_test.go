@@ -22,11 +22,17 @@ func TestCreateWorktree(t *testing.T) {
 		t.Errorf("expected path %q, got %q", expectedPath, path)
 	}
 
-	if len(runner.calls) != 1 {
-		t.Fatalf("expected 1 call, got %d", len(runner.calls))
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected 2 calls (branch delete + worktree add), got %d", len(runner.calls))
 	}
 
-	call := runner.calls[0]
+	// First call: delete existing branch (cleanup)
+	if runner.calls[0].Args[0] != "branch" {
+		t.Errorf("expected first call to be 'git branch', got %v", runner.calls[0].Args)
+	}
+
+	// Second call: worktree add
+	call := runner.calls[1]
 	expectedArgs := []string{"worktree", "add", "-b", "ai/issue-42", expectedPath, "origin/main"}
 	if call.Name != "git" {
 		t.Errorf("expected command 'git', got %q", call.Name)
