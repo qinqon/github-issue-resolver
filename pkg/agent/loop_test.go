@@ -284,8 +284,14 @@ func TestProcessReviewComments_AddressesHumanComments(t *testing.T) {
 
 	agent.ProcessReviewComments(context.Background())
 
-	if len(runner.calls) != 1 {
-		t.Fatalf("expected 1 claude call, got %d", len(runner.calls))
+	claudeCalls := 0
+	for _, c := range runner.calls {
+		if c.Name == "claude" {
+			claudeCalls++
+		}
+	}
+	if claudeCalls != 1 {
+		t.Fatalf("expected 1 claude call, got %d", claudeCalls)
 	}
 
 	if agent.state.ActiveIssues[42].LastCommentID != 60 {
@@ -341,8 +347,14 @@ func TestProcessReviewComments_AllowsAllWhenWhitelistEmpty(t *testing.T) {
 
 	agent.ProcessReviewComments(context.Background())
 
-	if len(runner.calls) != 1 {
-		t.Errorf("expected 1 claude call with empty whitelist, got %d", len(runner.calls))
+	claudeCalls := 0
+	for _, c := range runner.calls {
+		if c.Name == "claude" {
+			claudeCalls++
+		}
+	}
+	if claudeCalls != 1 {
+		t.Errorf("expected 1 claude call with empty whitelist, got %d", claudeCalls)
 	}
 }
 

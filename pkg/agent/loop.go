@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -164,7 +165,11 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 			continue
 		}
 
-		// Check which comments still need a reply (Claude may have replied via gh api)
+		// Check if Claude made any code changes by looking for uncommitted or amended changes
+		diffOut, _, _ := a.runner.Run(ctx, work.WorktreePath, "git", "diff", "--stat", "origin/main")
+		hasChanges := len(strings.TrimSpace(string(diffOut))) > 0
+
+		// Post fallback reply for comments Claude didn't reply to
 		updatedComments, _ := a.gh.GetPRReviewComments(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, 0)
 		repliedTo = make(map[int64]bool)
 		for _, c := range updatedComments {
@@ -176,7 +181,11 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 			if repliedTo[c.ID] {
 				continue
 			}
-			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, c.ID, "Addressed in the latest push."); err != nil {
+			fallback := "Reviewed — no code changes needed for this comment."
+			if hasChanges {
+				fallback = "Addressed in the latest push."
+			}
+			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, c.ID, fallback); err != nil {
 				a.logger.Warn("failed to reply to comment", "comment", c.ID, "error", err)
 			}
 		}
