@@ -152,19 +152,25 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 		}
 
 		prompt := buildReviewResponsePrompt(*work, humanComments, a.cfg.SignedOffBy, a.cfg.Owner, a.cfg.Repo)
-		result, err := runClaude(ctx, a.runner, work.WorktreePath, prompt, a.cfg)
+		_, err = runClaude(ctx, a.runner, work.WorktreePath, prompt, a.cfg)
 		if err != nil {
 			a.logger.Error("claude failed to address review", "pr", work.PRNumber, "error", err)
 			continue
 		}
 
-		// Post reply to each comment — use Claude's result as the reply
-		replyBody := result.Result
-		if replyBody == "" {
-			replyBody = "Addressed in the latest push."
+		// Check which comments still need a reply (Claude may have replied via gh api)
+		updatedComments, _ := a.gh.GetPRReviewComments(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, 0)
+		repliedTo = make(map[int64]bool)
+		for _, c := range updatedComments {
+			if c.InReplyToID != 0 && c.User == a.cfg.GitHubUser {
+				repliedTo[c.InReplyToID] = true
+			}
 		}
 		for _, c := range humanComments {
-			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, c.ID, replyBody); err != nil {
+			if repliedTo[c.ID] {
+				continue
+			}
+			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, c.ID, "Addressed in the latest push."); err != nil {
 				a.logger.Warn("failed to reply to comment", "comment", c.ID, "error", err)
 			}
 		}
