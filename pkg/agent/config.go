@@ -13,6 +13,7 @@ type Config struct {
 	VertexProject string
 	LogLevel      string
 	DryRun        bool
+	OneShot       bool
 	SignedOffBy   string
 	GitHubUser    string   // authenticated GitHub username (for reaction checks)
 	Reviewers     []string // whitelist of users/bots whose reviews to address

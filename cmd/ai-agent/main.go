@@ -32,6 +32,7 @@ func parseConfig() agent.Config {
 	flag.StringVar(&cfg.VertexProject, "vertex-project", os.Getenv("ANTHROPIC_VERTEX_PROJECT_ID"), "GCP project ID for Vertex")
 	flag.StringVar(&cfg.LogLevel, "log-level", envOrDefault("AI_AGENT_LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 	flag.BoolVar(&cfg.DryRun, "dry-run", false, "Log what would be done without executing")
+	flag.BoolVar(&cfg.OneShot, "one-shot", false, "Run one cycle and exit")
 	flag.StringVar(&cfg.SignedOffBy, "signed-off-by", os.Getenv("AI_AGENT_SIGNED_OFF_BY"), "Signed-off-by value for commits (e.g. \"Name <email>\")")
 
 	var reviewers string
@@ -131,11 +132,14 @@ func main() {
 		"dry-run", cfg.DryRun,
 	)
 
+	runLoop(ctx, a, logger)
+
+	if cfg.OneShot {
+		return
+	}
+
 	ticker := time.NewTicker(cfg.PollInterval)
 	defer ticker.Stop()
-
-	// Run once immediately, then on tick
-	runLoop(ctx, a, logger)
 
 	for {
 		select {
