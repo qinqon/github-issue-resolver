@@ -78,12 +78,11 @@ func (g *GitWorktreeManager) SyncWorktree(ctx context.Context, worktreePath stri
 	}
 	branch := strings.TrimSpace(string(branchOut))
 
-	// Rebase onto the remote branch if it exists
-	_, stderr, err = g.runner.Run(ctx, worktreePath, "git", "rebase", "origin/"+branch)
+	// Hard reset to remote — the remote branch is the source of truth
+	// (force pushes from amend make rebase unreliable)
+	_, stderr, err = g.runner.Run(ctx, worktreePath, "git", "reset", "--hard", "origin/"+branch)
 	if err != nil {
-		// Abort rebase on conflict
-		g.runner.Run(ctx, worktreePath, "git", "rebase", "--abort")
-		return fmt.Errorf("git rebase origin/%s: %w (stderr: %s)", branch, err, string(stderr))
+		return fmt.Errorf("git reset --hard origin/%s: %w (stderr: %s)", branch, err, string(stderr))
 	}
 	return nil
 }

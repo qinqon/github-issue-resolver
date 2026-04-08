@@ -85,7 +85,7 @@ func TestSyncWorktree(t *testing.T) {
 	}
 
 	if len(runner.calls) != 3 {
-		t.Fatalf("expected 3 calls (fetch, rev-parse, rebase), got %d", len(runner.calls))
+		t.Fatalf("expected 3 calls (fetch, rev-parse, reset), got %d", len(runner.calls))
 	}
 
 	// First call: fetch
@@ -101,9 +101,9 @@ func TestSyncWorktree(t *testing.T) {
 		t.Errorf("expected second call 'git rev-parse', got %v", runner.calls[1].Args)
 	}
 
-	// Third call: rebase
-	if runner.calls[2].Args[0] != "rebase" || runner.calls[2].Args[1] != "origin/ai/issue-42" {
-		t.Errorf("expected 'git rebase origin/ai/issue-42', got %v", runner.calls[2].Args)
+	// Third call: reset --hard
+	if runner.calls[2].Args[0] != "reset" || runner.calls[2].Args[1] != "--hard" || runner.calls[2].Args[2] != "origin/ai/issue-42" {
+		t.Errorf("expected 'git reset --hard origin/ai/issue-42', got %v", runner.calls[2].Args)
 	}
 }
 
