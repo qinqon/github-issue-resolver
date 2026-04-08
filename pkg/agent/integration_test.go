@@ -693,3 +693,65 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	}
 }
 
+func TestIntegration_SyncWorktreePullsManualCommits(t *testing.T) {
+	ctx := context.Background()
+	cloneDir := initBareRepo(t)
+	bareDir := filepath.Join(filepath.Dir(cloneDir), "repo.git")
+
+	gh := newFakeGitHub()
+	ghClient := &fakeGitHubClient{state: gh}
+	runner := &fakeClaudeRunner{}
+
+	wtManager := NewGitWorktreeManager(&ExecRunner{}, cloneDir, bareDir)
+
+	agent := NewAgent(
+		ghClient,
+		runner,
+		wtManager,
+		NewState(),
+		Config{Owner: "owner", Repo: "repo", Label: "good-for-ai"},
+		slog.Default(),
+	)
+
+	// Create issue and PR
+	gh.addIssue(Issue{Number: 88, Title: "Sync test", Body: "test sync"})
+	gh.addPR("ai/issue-88")
+
+	agent.CleanupDone(ctx)
+	agent.ProcessNewIssues(ctx)
+
+	work := agent.state.ActiveIssues[88]
+	if work == nil {
+		t.Fatal("issue 88 should be in state")
+	}
+
+	// Simulate a manual commit pushed to the branch by someone else
+	// (push directly to the bare repo from a separate clone)
+	manualClone := filepath.Join(t.TempDir(), "manual")
+	run(t, "", "git", "clone", bareDir, manualClone)
+	run(t, manualClone, "git", "config", "user.email", "human@test.com")
+	run(t, manualClone, "git", "config", "user.name", "Human")
+	run(t, manualClone, "git", "checkout", work.BranchName)
+	manualFile := filepath.Join(manualClone, "manual.txt")
+	os.WriteFile(manualFile, []byte("manual change\n"), 0o644)
+	run(t, manualClone, "git", "add", ".")
+	run(t, manualClone, "git", "commit", "-m", "manual fix by human")
+	run(t, manualClone, "git", "push", "origin", work.BranchName)
+
+	// Verify the file doesn't exist in the worktree yet
+	if _, err := os.Stat(filepath.Join(work.WorktreePath, "manual.txt")); err == nil {
+		t.Fatal("manual.txt should not exist in worktree before sync")
+	}
+
+	// Sync the worktree
+	err := wtManager.SyncWorktree(ctx, work.WorktreePath)
+	if err != nil {
+		t.Fatalf("SyncWorktree failed: %v", err)
+	}
+
+	// Verify the manual commit is now in the worktree
+	if _, err := os.Stat(filepath.Join(work.WorktreePath, "manual.txt")); os.IsNotExist(err) {
+		t.Error("manual.txt should exist in worktree after sync")
+	}
+}
+

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // WorktreeManager manages git worktrees for parallel issue work.
@@ -64,9 +65,25 @@ func (g *GitWorktreeManager) CreateWorktree(ctx context.Context, branchName stri
 }
 
 func (g *GitWorktreeManager) SyncWorktree(ctx context.Context, worktreePath string) error {
-	_, stderr, err := g.runner.Run(ctx, worktreePath, "git", "pull", "--rebase", "origin")
+	// Fetch latest from origin
+	_, stderr, err := g.runner.Run(ctx, worktreePath, "git", "fetch", "origin")
 	if err != nil {
-		return fmt.Errorf("git pull --rebase: %w (stderr: %s)", err, string(stderr))
+		return fmt.Errorf("git fetch: %w (stderr: %s)", err, string(stderr))
+	}
+
+	// Get the current branch name
+	branchOut, _, err := g.runner.Run(ctx, worktreePath, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return fmt.Errorf("git rev-parse: %w", err)
+	}
+	branch := strings.TrimSpace(string(branchOut))
+
+	// Rebase onto the remote branch if it exists
+	_, stderr, err = g.runner.Run(ctx, worktreePath, "git", "rebase", "origin/"+branch)
+	if err != nil {
+		// Abort rebase on conflict
+		g.runner.Run(ctx, worktreePath, "git", "rebase", "--abort")
+		return fmt.Errorf("git rebase origin/%s: %w (stderr: %s)", branch, err, string(stderr))
 	}
 	return nil
 }

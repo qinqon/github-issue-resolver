@@ -75,6 +75,38 @@ func TestRemoveWorktree(t *testing.T) {
 	}
 }
 
+func TestSyncWorktree(t *testing.T) {
+	runner := &mockCommandRunner{stdout: []byte("ai/issue-42\n")}
+	mgr := NewGitWorktreeManager(runner, "/tmp/repo", "https://github.com/owner/repo.git")
+
+	err := mgr.SyncWorktree(context.Background(), "/tmp/repo/worktrees/ai/issue-42")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(runner.calls) != 3 {
+		t.Fatalf("expected 3 calls (fetch, rev-parse, rebase), got %d", len(runner.calls))
+	}
+
+	// First call: fetch
+	if runner.calls[0].Args[0] != "fetch" {
+		t.Errorf("expected first call 'git fetch', got %v", runner.calls[0].Args)
+	}
+	if runner.calls[0].WorkDir != "/tmp/repo/worktrees/ai/issue-42" {
+		t.Errorf("expected workdir for fetch, got %q", runner.calls[0].WorkDir)
+	}
+
+	// Second call: rev-parse
+	if runner.calls[1].Args[0] != "rev-parse" {
+		t.Errorf("expected second call 'git rev-parse', got %v", runner.calls[1].Args)
+	}
+
+	// Third call: rebase
+	if runner.calls[2].Args[0] != "rebase" || runner.calls[2].Args[1] != "origin/ai/issue-42" {
+		t.Errorf("expected 'git rebase origin/ai/issue-42', got %v", runner.calls[2].Args)
+	}
+}
+
 func TestEnsureRepoCloned_AlreadyCloned(t *testing.T) {
 	dir := t.TempDir()
 	// Create a .git directory to simulate an existing clone
