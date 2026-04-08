@@ -225,8 +225,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		if work.CIFixAttempts >= maxCIFixAttempts {
 			if work.LastCIStatus != "max-retries-reached" {
 				a.logger.Warn("CI fix attempts exhausted", "pr", work.PRNumber, "attempts", work.CIFixAttempts)
-				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.IssueNumber,
-					fmt.Sprintf("CI is still failing after %d fix attempts on PR #%d. Human intervention needed.", maxCIFixAttempts, work.PRNumber))
+				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+					fmt.Sprintf("CI is still failing after %d fix attempts. Human intervention needed.\n\n%s", maxCIFixAttempts, botMarker))
 				work.LastCIStatus = "max-retries-reached"
 			}
 			continue
@@ -294,7 +294,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			explanation := strings.TrimPrefix(strings.TrimSpace(result.Result), "UNRELATED")
 			explanation = strings.TrimSpace(explanation)
 			comment := fmt.Sprintf("CI check failed but appears unrelated to this PR's changes.\n\n%s\n\n%s", explanation, botMarker)
-			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.IssueNumber, comment)
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, comment)
 			work.LastCIStatus = "unrelated-failure"
 			continue
 		}
