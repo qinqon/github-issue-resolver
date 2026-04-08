@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/google/go-github/v84/github"
 )
@@ -204,15 +205,22 @@ func (g *GoGitHubClient) GetCheckRuns(ctx context.Context, owner, repo, ref stri
 }
 
 func (g *GoGitHubClient) GetCheckRunLog(ctx context.Context, owner, repo string, checkRunID int64) (string, error) {
-	// Get check run annotations which contain failure details
-	annotations, _, err := g.client.Checks.ListCheckRunAnnotations(ctx, owner, repo, checkRunID, nil)
+	// The check run ID is the same as the job ID for GitHub Actions
+	_, resp, err := g.client.Actions.GetWorkflowJobLogs(ctx, owner, repo, checkRunID, 4)
 	if err != nil {
-		return "", fmt.Errorf("listing annotations: %w", err)
+		return "", fmt.Errorf("getting job logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading job logs: %w", err)
 	}
 
-	var log string
-	for _, a := range annotations {
-		log += fmt.Sprintf("%s:%d: %s - %s\n", a.GetPath(), a.GetStartLine(), a.GetAnnotationLevel(), a.GetMessage())
+	log := string(data)
+	// Truncate to last 3000 chars to avoid huge prompts
+	if len(log) > 3000 {
+		log = "...(truncated)...\n" + log[len(log)-3000:]
 	}
 	return log, nil
 }

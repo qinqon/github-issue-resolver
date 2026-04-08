@@ -256,6 +256,18 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
+		// Fetch logs for each failing check
+		for i, f := range failures {
+			if f.Output == "" {
+				log, err := a.gh.GetCheckRunLog(ctx, a.cfg.Owner, a.cfg.Repo, f.ID)
+				if err != nil {
+					a.logger.Warn("failed to get check run log", "check", f.Name, "error", err)
+				} else {
+					failures[i].Output = log
+				}
+			}
+		}
+
 		a.logger.Info("CI failing, investigating", "pr", work.PRNumber, "failures", len(failures), "attempt", work.CIFixAttempts+1)
 
 		// Pull latest changes
