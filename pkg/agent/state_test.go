@@ -50,8 +50,8 @@ func TestBuildStateFromGitHub_RecoversPRState(t *testing.T) {
 	if work.Status != "pr-open" {
 		t.Errorf("expected status 'pr-open', got %q", work.Status)
 	}
-	if work.LastCommentID != 20 {
-		t.Errorf("expected lastCommentID 20, got %d", work.LastCommentID)
+	if work.LastCommentID != 0 {
+		t.Errorf("expected lastCommentID 0 (reactions used instead), got %d", work.LastCommentID)
 	}
 }
 

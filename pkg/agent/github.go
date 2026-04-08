@@ -21,6 +21,7 @@ type GitHubClient interface {
 	GetCheckRuns(ctx context.Context, owner, repo, ref string) ([]CheckRun, error)
 	GetCheckRunLog(ctx context.Context, owner, repo string, checkRunID int64) (string, error)
 	GetPRHeadSHA(ctx context.Context, owner, repo string, prNumber int) (string, error)
+	GetPRCommentReactions(ctx context.Context, owner, repo string, commentID int64) ([]string, error)
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -212,6 +213,18 @@ func (g *GoGitHubClient) GetCheckRunLog(ctx context.Context, owner, repo string,
 		log += fmt.Sprintf("%s:%d: %s - %s\n", a.GetPath(), a.GetStartLine(), a.GetAnnotationLevel(), a.GetMessage())
 	}
 	return log, nil
+}
+
+func (g *GoGitHubClient) GetPRCommentReactions(ctx context.Context, owner, repo string, commentID int64) ([]string, error) {
+	reactions, _, err := g.client.Reactions.ListPullRequestCommentReactions(ctx, owner, repo, commentID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("listing reactions: %w", err)
+	}
+	var contents []string
+	for _, r := range reactions {
+		contents = append(contents, r.GetContent())
+	}
+	return contents, nil
 }
 
 func (g *GoGitHubClient) GetPRHeadSHA(ctx context.Context, owner, repo string, prNumber int) (string, error) {

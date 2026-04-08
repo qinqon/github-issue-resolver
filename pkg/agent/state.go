@@ -52,18 +52,9 @@ func BuildStateFromGitHub(ctx context.Context, gh GitHubClient, cfg Config, clon
 		if len(prs) > 0 {
 			work.PRNumber = prs[0].Number
 			work.Status = "pr-open"
+			// lastCommentID stays 0 — ProcessReviewComments uses :eyes: reaction to skip already-handled comments
 
-			// Find the highest comment ID we've already reacted to (eyes)
-			comments, err := gh.GetPRReviewComments(ctx, cfg.Owner, cfg.Repo, work.PRNumber, 0)
-			if err == nil {
-				for _, c := range comments {
-					if c.ID > work.LastCommentID {
-						work.LastCommentID = c.ID
-					}
-				}
-			}
-
-			logger.Info("recovered state from GitHub", "issue", issue.Number, "pr", work.PRNumber, "lastCommentID", work.LastCommentID)
+			logger.Info("recovered state from GitHub", "issue", issue.Number, "pr", work.PRNumber)
 		} else {
 			// No PR yet — check if it has the ai-failed label
 			hasFailed := false

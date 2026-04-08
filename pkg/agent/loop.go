@@ -115,12 +115,27 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 			continue
 		}
 
-		// Filter comments to only whitelisted reviewers
+		// Filter comments: only whitelisted reviewers, skip already-processed (has :eyes: reaction)
 		var humanComments []ReviewComment
 		for _, c := range comments {
-			if a.isAllowedReviewer(c.User) {
-				humanComments = append(humanComments, c)
+			if !a.isAllowedReviewer(c.User) {
+				continue
 			}
+			// Skip comments we've already reacted to
+			reactions, err := a.gh.GetPRCommentReactions(ctx, a.cfg.Owner, a.cfg.Repo, c.ID)
+			if err == nil {
+				alreadyProcessed := false
+				for _, r := range reactions {
+					if r == "eyes" {
+						alreadyProcessed = true
+						break
+					}
+				}
+				if alreadyProcessed {
+					continue
+				}
+			}
+			humanComments = append(humanComments, c)
 		}
 
 		if len(humanComments) == 0 {
