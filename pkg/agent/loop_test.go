@@ -20,6 +20,8 @@ type mockGitHubClient struct {
 	addedReactions []string
 	checkRuns      []CheckRun
 	prHeadSHAs     []string // returns these in sequence; if empty returns "abc123"
+	prsAfterNCalls int      // only return PRs after this many ListPRsByHead calls
+	prsCallCount   int
 
 	listIssuesErr error
 }
@@ -68,6 +70,10 @@ func (m *mockGitHubClient) RemoveLabel(_ context.Context, _, _ string, _ int, la
 }
 
 func (m *mockGitHubClient) ListPRsByHead(_ context.Context, _, _, _ string) ([]PR, error) {
+	m.prsCallCount++
+	if m.prsAfterNCalls > 0 && m.prsCallCount <= m.prsAfterNCalls {
+		return nil, nil
+	}
 	return m.prs, nil
 }
 
@@ -207,8 +213,9 @@ func TestProcessNewIssues_RechecksForPR(t *testing.T) {
 func TestProcessNewIssues_HappyPath(t *testing.T) {
 	claudeResult := streamResultJSON(ClaudeResult{Result: "Fixed it"})
 	gh := &mockGitHubClient{
-		issues: []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
-		prs:    []PR{{Number: 100, State: "open", Head: "ai/issue-42"}},
+		issues:         []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
+		prs:            []PR{{Number: 100, State: "open", Head: "ai/issue-42"}},
+		prsAfterNCalls: 1, // skip first call (early check), return PR on second (after Claude)
 	}
 	runner := &mockCommandRunner{stdout: claudeResult}
 	wt := &mockWorktreeManager{}
@@ -223,6 +230,37 @@ func TestProcessNewIssues_HappyPath(t *testing.T) {
 	work, ok := agent.state.ActiveIssues[42]
 	if !ok {
 		t.Fatal("issue 42 not in state")
+	}
+	if work.PRNumber != 100 {
+		t.Errorf("expected PR 100, got %d", work.PRNumber)
+	}
+	if work.Status != "pr-open" {
+		t.Errorf("expected status 'pr-open', got %q", work.Status)
+	}
+}
+
+func TestProcessNewIssues_SkipsWhenPRExists(t *testing.T) {
+	gh := &mockGitHubClient{
+		issues: []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
+		prs:    []PR{{Number: 100, State: "open", Head: "ai/issue-42"}},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.ProcessNewIssues(context.Background())
+
+	// Should not invoke Claude
+	if len(runner.calls) != 0 {
+		t.Error("should not invoke claude when PR already exists")
+	}
+	if len(wt.createdBranches) != 0 {
+		t.Error("should not create worktree when PR already exists")
+	}
+
+	work, ok := agent.state.ActiveIssues[42]
+	if !ok {
+		t.Fatal("issue 42 should be tracked")
 	}
 	if work.PRNumber != 100 {
 		t.Errorf("expected PR 100, got %d", work.PRNumber)

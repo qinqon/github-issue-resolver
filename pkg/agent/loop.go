@@ -61,11 +61,29 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 
 		a.logger.Info("processing new issue", "issue", issue.Number, "title", issue.Title)
 
-		_ = a.gh.AssignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
-		_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
-			fmt.Sprintf("AI agent is working on this issue. A PR will be created shortly.\n\n%s", botMarker))
-
 		branchName := fmt.Sprintf("ai/issue-%d", issue.Number)
+
+		// Check if a PR already exists for this issue
+		prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, branchName)
+		if err == nil && len(prs) > 0 {
+			a.logger.Info("PR already exists for issue", "issue", issue.Number, "pr", prs[0].Number)
+			a.state.ActiveIssues[issue.Number] = &IssueWork{
+				IssueNumber: issue.Number,
+				IssueTitle:  issue.Title,
+				BranchName:  branchName,
+				PRNumber:    prs[0].Number,
+				Status:      "pr-open",
+				CreatedAt:   time.Now(),
+			}
+			continue
+		}
+
+		// Only post in-progress comment if we haven't already
+		if !a.hasExistingBotComment(ctx, issue.Number, "working on this issue") {
+			_ = a.gh.AssignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+				fmt.Sprintf("AI agent is working on this issue. A PR will be created shortly.\n\n%s", botMarker))
+		}
 
 		if err := a.worktrees.EnsureRepoCloned(ctx); err != nil {
 			a.logger.Error("failed to ensure repo cloned", "error", err)
@@ -104,7 +122,7 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 		_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
 
 		// Find the PR created by Claude
-		prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, branchName)
+		prs, err = a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, branchName)
 		if err != nil {
 			a.logger.Error("failed to list PRs", "issue", issue.Number, "error", err)
 		} else if len(prs) > 0 {
@@ -353,6 +371,21 @@ func (a *Agent) CleanupDone(ctx context.Context) {
 
 		delete(a.state.ActiveIssues, issueNum)
 	}
+}
+
+// hasExistingBotComment returns true if a bot comment containing the given text
+// already exists on the issue.
+func (a *Agent) hasExistingBotComment(ctx context.Context, issueNumber int, text string) bool {
+	comments, err := a.gh.GetIssueComments(ctx, a.cfg.Owner, a.cfg.Repo, issueNumber, 0)
+	if err != nil {
+		return false
+	}
+	for _, c := range comments {
+		if strings.Contains(c.Body, botMarker) && strings.Contains(c.Body, text) {
+			return true
+		}
+	}
+	return false
 }
 
 // shortSHA returns the first 7 characters of a SHA, or the full string if shorter.
