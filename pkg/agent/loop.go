@@ -245,7 +245,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
-		if headSHA == work.LastCheckedSHA {
+		// Check if we already investigated this SHA by looking for a bot comment
+		if a.alreadyCheckedCI(ctx, work.PRNumber, headSHA) {
 			continue
 		}
 
@@ -297,7 +298,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Error("claude failed to investigate CI", "pr", work.PRNumber, "error", err)
 			work.CIFixAttempts++
 			work.LastCIStatus = "failure"
-			work.LastCheckedSHA = headSHA
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI investigation failed for commit %s: %v\n\n%s", shortSHA(headSHA), err, botMarker))
 			continue
 		}
 
@@ -305,22 +307,24 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Info("CI failure is unrelated to PR changes", "pr", work.PRNumber)
 			explanation := strings.TrimPrefix(strings.TrimSpace(result.Result), "UNRELATED")
 			explanation = strings.TrimSpace(explanation)
-			comment := fmt.Sprintf("CI check failed but appears unrelated to this PR's changes.\n\n%s\n\n%s", explanation, botMarker)
+			comment := fmt.Sprintf("CI check failed on commit %s but appears unrelated to this PR's changes.\n\n%s\n\n%s", shortSHA(headSHA), explanation, botMarker)
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, comment)
 			work.LastCIStatus = "unrelated-failure"
-			work.LastCheckedSHA = headSHA
 			continue
 		}
 
 		newSHA, _ := a.gh.GetPRHeadSHA(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
 		if newSHA == headSHA {
 			a.logger.Warn("Claude said RELATED but made no changes", "pr", work.PRNumber)
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI is failing on commit %s. Investigated but could not push a fix.\n\n%s", shortSHA(headSHA), botMarker))
 		} else {
 			a.logger.Info("CI failure is related, Claude pushed a fix", "pr", work.PRNumber)
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI was failing on commit %s. Pushed a fix.\n\n%s", shortSHA(headSHA), botMarker))
 		}
 		work.CIFixAttempts++
 		work.LastCIStatus = "failure"
-		work.LastCheckedSHA = headSHA
 	}
 }
 
@@ -349,6 +353,30 @@ func (a *Agent) CleanupDone(ctx context.Context) {
 
 		delete(a.state.ActiveIssues, issueNum)
 	}
+}
+
+// shortSHA returns the first 7 characters of a SHA, or the full string if shorter.
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
+}
+
+// alreadyCheckedCI returns true if a bot comment mentioning the given SHA
+// already exists on the PR, indicating this commit was already investigated.
+func (a *Agent) alreadyCheckedCI(ctx context.Context, prNumber int, sha string) bool {
+	comments, err := a.gh.GetIssueComments(ctx, a.cfg.Owner, a.cfg.Repo, prNumber, 0)
+	if err != nil {
+		return false
+	}
+	short := shortSHA(sha)
+	for _, c := range comments {
+		if strings.Contains(c.Body, botMarker) && strings.Contains(c.Body, short) {
+			return true
+		}
+	}
+	return false
 }
 
 // isAllowedReviewer returns true if the user is in the reviewers whitelist.
