@@ -245,9 +245,10 @@ func run(t *testing.T, dir string, name string, args ...string) string {
 // fakeClaudeRunner records calls and returns canned results.
 // It also creates a fake commit in the worktree to simulate Claude's work.
 type fakeClaudeRunner struct {
-	mu    sync.Mutex
-	calls []commandCall
-	err   error
+	mu          sync.Mutex
+	calls       []commandCall
+	err         error
+	onClaudeRun func() // called when claude is invoked, before returning
 }
 
 func (f *fakeClaudeRunner) Run(_ context.Context, workDir string, name string, args ...string) ([]byte, []byte, error) {
@@ -272,6 +273,10 @@ func (f *fakeClaudeRunner) Run(_ context.Context, workDir string, name string, a
 		)
 		cmd.Run()
 		exec.Command("git", "-C", workDir, "push", "origin", "HEAD").Run()
+
+		if f.onClaudeRun != nil {
+			f.onClaudeRun()
+		}
 
 		if err != nil {
 			return nil, []byte("claude error"), err
@@ -314,10 +319,16 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 
 	// === Phase 1: New issue appears, Claude implements it ===
 	gh.addIssue(Issue{Number: 42, Title: "Fix the bug", Body: "It's broken"})
-	prNum := gh.addPR("ai/issue-42")
+
+	// PR is created during Claude's run (simulating gh pr create)
+	var prNum int
+	runner.onClaudeRun = func() {
+		prNum = gh.addPR("ai/issue-42")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil // clear hook so subsequent Claude calls don't create more PRs
 
 	// Verify state
 	work, ok := agent.state.ActiveIssues[42]
@@ -488,12 +499,16 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 		slog.Default(),
 	)
 
-	// First run: issue processed, PR created
+	// First run: issue processed, PR created during Claude run
 	gh.addIssue(Issue{Number: 10, Title: "Feature", Body: "Add feature"})
-	prNum := gh.addPR("ai/issue-10")
+	var prNum int
+	runner.onClaudeRun = func() {
+		prNum = gh.addPR("ai/issue-10")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	if agent.state.ActiveIssues[10].PRNumber != prNum {
 		t.Fatal("PR should be tracked")
@@ -503,8 +518,10 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 	gh.closePR(prNum)
 
 	// Next cycle: cleanup removes it, then processNewIssues picks it up again
-	// Add a new PR for the retry
-	prNum2 := gh.addPR("ai/issue-10")
+	var prNum2 int
+	runner.onClaudeRun = func() {
+		prNum2 = gh.addPR("ai/issue-10")
+	}
 
 	agent.CleanupDone(ctx)
 
@@ -542,10 +559,14 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Setup: issue with open PR
+	// Setup: issue with open PR (created during Claude run)
 	gh.addIssue(Issue{Number: 50, Title: "Fix", Body: "broken"})
-	prNum := gh.addPR("ai/issue-50")
+	var prNum int
+	runner.onClaudeRun = func() {
+		prNum = gh.addPR("ai/issue-50")
+	}
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	// Non-whitelisted user comments — should be ignored
 	gh.addReviewComment(prNum, "random-bot", "do something", "fix.go", 1)
@@ -607,12 +628,15 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Setup: issue with open PR
+	// Setup: issue with open PR (created during Claude run)
 	gh.addIssue(Issue{Number: 77, Title: "Add feature", Body: "new feature"})
-	gh.addPR("ai/issue-77")
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-77")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work := agent.state.ActiveIssues[77]
 	if work == nil {
@@ -723,12 +747,15 @@ func TestIntegration_SyncWorktreePullsManualCommits(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Create issue and PR
+	// Create issue and PR (created during Claude run)
 	gh.addIssue(Issue{Number: 88, Title: "Sync test", Body: "test sync"})
-	gh.addPR("ai/issue-88")
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-88")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work := agent.state.ActiveIssues[88]
 	if work == nil {
