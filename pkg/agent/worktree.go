@@ -56,10 +56,11 @@ func (g *GitWorktreeManager) CreateWorktree(ctx context.Context, branchName stri
 		return worktreePath, nil
 	}
 
-	// Clean up stale git state if the directory was partially removed
+	// Clean up stale worktree state
+	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "remove", "--force", worktreePath)
+	os.RemoveAll(worktreePath)
 	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "prune")
 	g.runner.Run(ctx, g.cloneDir, "git", "branch", "-D", branchName)
-	os.RemoveAll(worktreePath)
 
 	_, stderr, err := g.runner.Run(ctx, g.cloneDir, "git", "worktree", "add", "-b", branchName, worktreePath, "origin/main")
 	if err != nil {

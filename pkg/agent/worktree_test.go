@@ -22,18 +22,21 @@ func TestCreateWorktree_New(t *testing.T) {
 		t.Errorf("expected path %q, got %q", expectedPath, path)
 	}
 
-	if len(runner.calls) != 3 {
-		t.Fatalf("expected 3 calls (prune, branch delete, worktree add), got %d", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("expected 4 calls (worktree remove, prune, branch delete, worktree add), got %d", len(runner.calls))
 	}
 
-	if runner.calls[0].Args[0] != "worktree" || runner.calls[0].Args[1] != "prune" {
-		t.Errorf("expected first call to be 'git worktree prune', got %v", runner.calls[0].Args)
+	if runner.calls[0].Args[0] != "worktree" || runner.calls[0].Args[1] != "remove" {
+		t.Errorf("expected first call to be 'git worktree remove', got %v", runner.calls[0].Args)
 	}
-	if runner.calls[1].Args[0] != "branch" {
-		t.Errorf("expected second call to be 'git branch', got %v", runner.calls[1].Args)
+	if runner.calls[1].Args[0] != "worktree" || runner.calls[1].Args[1] != "prune" {
+		t.Errorf("expected second call to be 'git worktree prune', got %v", runner.calls[1].Args)
+	}
+	if runner.calls[2].Args[0] != "branch" {
+		t.Errorf("expected third call to be 'git branch', got %v", runner.calls[2].Args)
 	}
 
-	call := runner.calls[2]
+	call := runner.calls[3]
 	expectedArgs := []string{"worktree", "add", "-b", "ai/issue-42", expectedPath, "origin/main"}
 	if call.Name != "git" {
 		t.Errorf("expected command 'git', got %q", call.Name)
