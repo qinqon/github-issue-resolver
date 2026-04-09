@@ -24,6 +24,8 @@ type GitHubClient interface {
 	GetPRHeadSHA(ctx context.Context, owner, repo string, prNumber int) (string, error)
 	HasPRCommentReaction(ctx context.Context, owner, repo string, commentID int64, reaction, user string) (bool, error)
 	ReplyToPRComment(ctx context.Context, owner, repo string, prNumber int, commentID int64, body string) error
+	AssignIssue(ctx context.Context, owner, repo string, issueNumber int, user string) error
+	UnassignIssue(ctx context.Context, owner, repo string, issueNumber int, user string) error
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -257,6 +259,22 @@ func (g *GoGitHubClient) GetPRHeadSHA(ctx context.Context, owner, repo string, p
 		return "", fmt.Errorf("getting PR head SHA: %w", err)
 	}
 	return pr.GetHead().GetSHA(), nil
+}
+
+func (g *GoGitHubClient) AssignIssue(ctx context.Context, owner, repo string, issueNumber int, user string) error {
+	_, _, err := g.client.Issues.AddAssignees(ctx, owner, repo, issueNumber, []string{user})
+	if err != nil {
+		return fmt.Errorf("assigning issue: %w", err)
+	}
+	return nil
+}
+
+func (g *GoGitHubClient) UnassignIssue(ctx context.Context, owner, repo string, issueNumber int, user string) error {
+	_, _, err := g.client.Issues.RemoveAssignees(ctx, owner, repo, issueNumber, []string{user})
+	if err != nil {
+		return fmt.Errorf("unassigning issue: %w", err)
+	}
+	return nil
 }
 
 // GetAuthenticatedUser returns the login, name, and email of the authenticated user.

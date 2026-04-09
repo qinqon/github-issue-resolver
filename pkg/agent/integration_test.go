@@ -194,6 +194,14 @@ func (f *fakeGitHubClient) ReplyToPRComment(_ context.Context, _, _ string, _ in
 	return nil
 }
 
+func (f *fakeGitHubClient) AssignIssue(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+
+func (f *fakeGitHubClient) UnassignIssue(_ context.Context, _, _ string, _ int, _ string) error {
+	return nil
+}
+
 // initBareRepo creates a bare repo and a working clone for the agent to use.
 // Returns (cloneDir, cleanup).
 func initBareRepo(t *testing.T) string {

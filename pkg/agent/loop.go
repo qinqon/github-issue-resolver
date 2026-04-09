@@ -61,6 +61,10 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 
 		a.logger.Info("processing new issue", "issue", issue.Number, "title", issue.Title)
 
+		_ = a.gh.AssignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+		_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+			fmt.Sprintf("AI agent is working on this issue. A PR will be created shortly.\n\n%s", botMarker))
+
 		branchName := fmt.Sprintf("ai/issue-%d", issue.Number)
 
 		if err := a.worktrees.EnsureRepoCloned(ctx); err != nil {
@@ -90,11 +94,14 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			work.Status = "failed"
 			a.state.ActiveIssues[issue.Number] = work
 
+			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
 			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
 				fmt.Sprintf("AI agent failed to implement this issue: %v", err))
 			continue
 		}
+
+		_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
 
 		// Find the PR created by Claude
 		prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, branchName)
