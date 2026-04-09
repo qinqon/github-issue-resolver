@@ -53,6 +53,7 @@ func (g *GitWorktreeManager) CreateWorktree(ctx context.Context, branchName stri
 
 	// Clean up from a previous failed attempt
 	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "remove", "--force", worktreePath)
+	os.RemoveAll(worktreePath)
 	g.runner.Run(ctx, g.cloneDir, "git", "worktree", "prune")
 	g.runner.Run(ctx, g.cloneDir, "git", "branch", "-D", branchName)
 
