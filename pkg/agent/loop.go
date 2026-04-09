@@ -245,6 +245,10 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
+		if headSHA == work.LastCheckedSHA {
+			continue
+		}
+
 		runs, err := a.gh.GetCheckRuns(ctx, a.cfg.Owner, a.cfg.Repo, headSHA)
 		if err != nil {
 			a.logger.Error("failed to get check runs", "pr", work.PRNumber, "error", err)
@@ -293,6 +297,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Error("claude failed to investigate CI", "pr", work.PRNumber, "error", err)
 			work.CIFixAttempts++
 			work.LastCIStatus = "failure"
+			work.LastCheckedSHA = headSHA
 			continue
 		}
 
@@ -303,6 +308,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			comment := fmt.Sprintf("CI check failed but appears unrelated to this PR's changes.\n\n%s\n\n%s", explanation, botMarker)
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, comment)
 			work.LastCIStatus = "unrelated-failure"
+			work.LastCheckedSHA = headSHA
 			continue
 		}
 
@@ -314,6 +320,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		}
 		work.CIFixAttempts++
 		work.LastCIStatus = "failure"
+		work.LastCheckedSHA = headSHA
 	}
 }
 

@@ -43,9 +43,10 @@ type IssueWork struct {
 	PRNumber      int       `json:"prNumber"`
 	LastCommentID int64     `json:"lastCommentID"`
 	Status        string    `json:"status"` // implementing, pr-open, failed, done
-	CIFixAttempts int       `json:"ciFixAttempts"`
-	LastCIStatus  string    `json:"lastCIStatus"` // "", "pending", "success", "failure"
-	CreatedAt     time.Time `json:"createdAt"`
+	CIFixAttempts  int       `json:"ciFixAttempts"`
+	LastCIStatus   string    `json:"lastCIStatus"` // "", "pending", "success", "failure"
+	LastCheckedSHA string    `json:"lastCheckedSHA"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // CheckRun represents a GitHub Actions check run.
