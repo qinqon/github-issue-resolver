@@ -167,10 +167,10 @@ func runClaude(ctx context.Context, runner CommandRunner, workDir, prompt string
 	if sr, ok := runner.(StreamingRunner); ok && logger != nil {
 		stdout, stderr, err = sr.RunStream(ctx, workDir, func(line []byte) {
 			logStreamEvent(logger, line)
-		}, "claude", "-p", "--output-format", "stream-json", "--dangerously-skip-permissions", prompt)
+		}, "claude", "-p", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions", prompt)
 	} else {
 		stdout, stderr, err = runner.Run(ctx, workDir,
-			"claude", "-p", "--output-format", "stream-json", "--dangerously-skip-permissions", prompt,
+			"claude", "-p", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions", prompt,
 		)
 	}
 

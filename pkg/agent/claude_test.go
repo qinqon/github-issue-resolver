@@ -91,7 +91,7 @@ func TestRunClaude_VertexEnvVars(t *testing.T) {
 
 	// Verify args include the required flags
 	args := strings.Join(call.Args, " ")
-	for _, want := range []string{"-p", "--output-format", "stream-json", "--dangerously-skip-permissions"} {
+	for _, want := range []string{"-p", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args missing %q: %v", want, call.Args)
 		}
