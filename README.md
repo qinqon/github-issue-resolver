@@ -13,24 +13,6 @@ A single long-running Go binary that automatically resolves GitHub issues using 
 
 Claude never merges; a human must approve and merge every PR.
 
-## Loop flow
-
-```mermaid
-flowchart LR
-    A([Poll]) --> B[Cleanup] --> C[New Issues] --> D[Reviews] --> E[Conflicts] --> F[CI Failures] --> G{one-shot?}
-    G -- no --> A
-    G -- yes --> H([Done])
-
-    style A fill:#4a90d9,stroke:#2a6cb6,color:#fff
-    style B fill:#f4f1de,stroke:#c9c4a6,color:#333
-    style C fill:#81b29a,stroke:#5a8a72,color:#fff
-    style D fill:#f2cc8f,stroke:#d4a54a,color:#333
-    style E fill:#e07a5f,stroke:#b8563f,color:#fff
-    style F fill:#3d405b,stroke:#2b2d40,color:#fff
-    style G fill:#f4f1de,stroke:#c9c4a6,color:#333
-    style H fill:#4a90d9,stroke:#2a6cb6,color:#fff
-```
-
 ## Prerequisites
 
 - Go 1.25+
