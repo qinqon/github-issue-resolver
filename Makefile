@@ -1,5 +1,5 @@
-REGISTRY ?= quay.io
-REPO ?= nmstate/ai-agent
+REGISTRY ?= ghcr.io
+REPO ?= qinqon/github-issue-resolver
 TAG ?= latest
 IMAGE = $(REGISTRY)/$(REPO):$(TAG)
 CONTAINER_CMD ?= podman
