@@ -42,6 +42,10 @@ func parseConfig() agent.Config {
 	var logFile string
 	flag.StringVar(&logFile, "log-file", os.Getenv("AI_AGENT_LOG_FILE"), "Log file path (default: stderr)")
 
+	// Fork flags
+	flag.StringVar(&cfg.ForkOwner, "fork-owner", os.Getenv("AI_AGENT_FORK_OWNER"), "Owner of the fork repo for pushing (empty = push to upstream)")
+	flag.StringVar(&cfg.ForkRepo, "fork-repo", os.Getenv("AI_AGENT_FORK_REPO"), "Name of the fork repo (empty = same as --repo)")
+
 	// GitHub App auth flags
 	var ghAppID int64
 	var ghAppPrivateKey string
@@ -138,7 +142,11 @@ func main() {
 		ghClient = appAuth.Client
 		tokenFunc = appAuth.TokenFunc
 		cfg.GitHubUser = appAuth.Login
-		cfg.GitHubHeadOwner = cfg.Owner // App pushes directly to upstream, no fork
+		if cfg.ForkOwner != "" {
+			cfg.GitHubHeadOwner = cfg.ForkOwner
+		} else {
+			cfg.GitHubHeadOwner = cfg.Owner
+		}
 		cfg.GitAuthorName = appAuth.Name
 		cfg.GitAuthorEmail = appAuth.Email
 		if cfg.SignedOffBy == "" {
@@ -187,8 +195,14 @@ func main() {
 	logger.Info("state rebuilt", "active-issues", len(state.ActiveIssues))
 
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", cfg.Owner, cfg.Repo)
-	forkURL := repoURL // default: same-repo workflow (GitHub App)
-	if !useAppAuth {
+	forkURL := repoURL // default: same-repo workflow
+	if cfg.ForkOwner != "" {
+		forkRepoName := cfg.ForkRepo
+		if forkRepoName == "" {
+			forkRepoName = cfg.Repo
+		}
+		forkURL = fmt.Sprintf("https://github.com/%s/%s.git", cfg.ForkOwner, forkRepoName)
+	} else if !useAppAuth {
 		forkURL = fmt.Sprintf("https://github.com/%s/%s.git", cfg.GitHubUser, cfg.Repo)
 	}
 	runner := &agent.ExecRunner{}
