@@ -230,13 +230,17 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 			a.logger.Warn("failed to get PR reviews", "pr", work.PRNumber, "error", err)
 		}
 
-		// Filter reviews: skip bot-posted, only whitelisted reviewers
+		// Filter reviews: skip bot-posted, only whitelisted reviewers, skip already-addressed
 		var humanReviews []PRReview
 		for _, r := range reviews {
 			if strings.Contains(r.Body, botMarker) {
 				continue
 			}
 			if !a.isAllowedReviewer(r.User) {
+				continue
+			}
+			// Skip reviews that were already addressed (ack comment exists)
+			if a.hasExistingBotComment(ctx, work.PRNumber, fmt.Sprintf("review-%d", r.ID)) {
 				continue
 			}
 			humanReviews = append(humanReviews, r)
