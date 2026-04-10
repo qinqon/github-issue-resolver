@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agent
+  namespace: ai-agent
+  labels:
+    app: ai-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ai-agent
+  template:
+    metadata:
+      labels:
+        app: ai-agent
+    spec:
+      containers:
+        - name: ai-agent
+          image: quay.io/nmstate/ai-agent:latest
+          args:
+            - --owner=nmstate
+            - --repo=kubernetes-nmstate
+            - --clone-dir=/work
+            - --log-level=debug
+            - --poll-interval=30s
+            - --reviewers=mkowalski,emy,qinqon,gemini-code-assist
+          env:
+            - name: GITHUB_APP_ID
+              value: "3334701"
+            - name: GITHUB_APP_INSTALLATION_ID
+              value: "122852342"
+            - name: GITHUB_APP_PRIVATE_KEY_PATH
+              value: /secrets/github/app.pem
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: /secrets/gcp/credentials.json
+            - name: CLOUD_ML_REGION
+              value: us-east5
+            - name: ANTHROPIC_VERTEX_PROJECT_ID
+              value: ""  # TODO: set your GCP project ID
+          volumeMounts:
+            - name: github-app-key
+              mountPath: /secrets/github
+              readOnly: true
+            - name: gcp-credentials
+              mountPath: /secrets/gcp
+              readOnly: true
+            - name: work
+              mountPath: /work
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: github-app-key
+          secret:
+            secretName: github-app-key
+        - name: gcp-credentials
+          secret:
+            secretName: gcp-credentials
+        - name: work
+          emptyDir: {}
