@@ -13,7 +13,7 @@ func TestBuildImplementationPrompt(t *testing.T) {
 		Labels: []string{"good-for-ai"},
 	}
 
-	prompt := buildImplementationPrompt(issue, "owner", "repo")
+	prompt := buildImplementationPrompt(issue, "", "owner", "repo", "origin")
 
 	checks := []string{
 		"#42",
@@ -22,13 +22,22 @@ func TestBuildImplementationPrompt(t *testing.T) {
 		"<user-provided-content>",
 		"</user-provided-content>",
 		"untrusted user input",
-		"Do NOT commit",
+		"Fixes #42",
+		"gh pr create",
+		"PULL_REQUEST_TEMPLATE",
+		"git push origin",
 	}
 
 	for _, want := range checks {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("prompt missing %q", want)
 		}
+	}
+
+	// With signed-off-by
+	prompt = buildImplementationPrompt(issue, "Test User <test@example.com>", "owner", "repo", "origin")
+	if !strings.Contains(prompt, "Signed-off-by: Test User <test@example.com>") {
+		t.Error("prompt missing Signed-off-by when provided")
 	}
 }
 
