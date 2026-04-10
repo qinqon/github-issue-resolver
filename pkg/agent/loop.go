@@ -67,32 +67,13 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 
 	for _, issue := range issues {
 		if work, exists := a.state.ActiveIssues[issue.Number]; exists {
+			// Re-check for PR if we lost track of it
 			if work.PRNumber == 0 && work.Status == "implementing" {
-				// Retry push and PR creation for issues where Claude finished but push failed
 				prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, work.BranchName)
 				if err == nil && len(prs) > 0 {
 					work.PRNumber = prs[0].Number
 					work.Status = "pr-open"
 					a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
-				} else if work.WorktreePath != "" {
-					a.logger.Info("retrying push for issue", "issue", issue.Number)
-					if err := a.gitPush(ctx, work.WorktreePath, true); err != nil {
-						a.logger.Error("retry push failed", "issue", issue.Number, "error", err)
-					} else {
-						head := work.BranchName
-						if a.cfg.GitHubHeadOwner != a.cfg.Owner {
-							head = fmt.Sprintf("%s:%s", a.cfg.GitHubHeadOwner, work.BranchName)
-						}
-						prBody := a.buildPRBody(ctx, work.WorktreePath, issue.Number)
-						prNumber, err := a.gh.CreatePR(ctx, a.cfg.Owner, a.cfg.Repo, issue.Title, prBody, head, "main")
-						if err != nil {
-							a.logger.Error("failed to create PR", "issue", issue.Number, "error", err)
-						} else {
-							work.PRNumber = prNumber
-							work.Status = "pr-open"
-							a.logger.Info("created PR on retry", "issue", issue.Number, "pr", prNumber)
-						}
-					}
 				}
 			}
 			a.logger.Debug("skipping already tracked issue", "issue", issue.Number)
@@ -149,7 +130,8 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			CreatedAt:    time.Now(),
 		}
 
-		prompt := buildImplementationPrompt(issue, a.cfg.Owner, a.cfg.Repo)
+		pushRemote := a.pushRemoteName()
+		prompt := buildImplementationPrompt(issue, a.cfg.SignedOffBy, a.cfg.Owner, a.cfg.Repo, pushRemote)
 		_, err = runClaude(ctx, a.runner, worktreePath, prompt, a.cfg, a.logger, false)
 		if err != nil {
 			a.logger.Error("claude failed", "issue", issue.Number, "error", err)
@@ -165,36 +147,14 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 
 		_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
 
-		// Commit, push, and create PR
-		if a.hasUncommittedChanges(ctx, worktreePath) {
-			commitMsg := fmt.Sprintf("%s\n\nFixes: https://github.com/%s/%s/issues/%d",
-				issue.Title, a.cfg.Owner, a.cfg.Repo, issue.Number)
-			if err := a.gitCommitAll(ctx, worktreePath, commitMsg); err != nil {
-				a.logger.Error("failed to commit", "issue", issue.Number, "error", err)
-				continue
-			}
-		}
-
-		if err := a.gitPush(ctx, worktreePath, true); err != nil {
-			a.logger.Error("failed to push", "issue", issue.Number, "error", err)
-			work.Status = "implementing"
-			a.state.ActiveIssues[issue.Number] = work
-			continue
-		}
-
-		prTitle := issue.Title
-		prBody := a.buildPRBody(ctx, worktreePath, issue.Number)
-		head := branchName
-		if a.cfg.GitHubHeadOwner != a.cfg.Owner {
-			head = fmt.Sprintf("%s:%s", a.cfg.GitHubHeadOwner, branchName)
-		}
-		prNumber, err := a.gh.CreatePR(ctx, a.cfg.Owner, a.cfg.Repo, prTitle, prBody, head, "main")
+		// Find the PR created by Claude
+		prs, err = a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, branchName)
 		if err != nil {
-			a.logger.Error("failed to create PR", "issue", issue.Number, "error", err)
-		} else {
-			work.PRNumber = prNumber
+			a.logger.Error("failed to list PRs", "issue", issue.Number, "error", err)
+		} else if len(prs) > 0 {
+			work.PRNumber = prs[0].Number
 			work.Status = "pr-open"
-			a.logger.Info("created PR", "issue", issue.Number, "pr", prNumber)
+			a.logger.Info("found PR", "issue", issue.Number, "pr", work.PRNumber)
 		}
 
 		a.state.ActiveIssues[issue.Number] = work
@@ -600,6 +560,14 @@ func (a *Agent) alreadyCheckedCI(ctx context.Context, prNumber int, sha string) 
 		}
 	}
 	return false
+}
+
+// pushRemoteName returns the git remote name used for pushing ("fork" or "origin").
+func (a *Agent) pushRemoteName() string {
+	if wtm, ok := a.worktrees.(*GitWorktreeManager); ok {
+		return wtm.PushRemote()
+	}
+	return "origin"
 }
 
 // buildPRBody constructs a PR description from the git log of the branch.

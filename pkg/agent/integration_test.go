@@ -279,11 +279,21 @@ func (f *fakeClaudeRunner) Run(_ context.Context, workDir string, name string, a
 	err := f.err
 	f.mu.Unlock()
 
-	// If this is a claude invocation, simulate work by creating/modifying a file
-	// The agent handles commit, push, and PR creation.
+	// If this is a claude invocation, simulate work: create a file, commit, push
 	if name == "claude" {
 		filePath := filepath.Join(workDir, "fix.go")
 		os.WriteFile(filePath, []byte(fmt.Sprintf("package main\n// fix %d\n", time.Now().UnixNano())), 0o644)
+
+		exec.Command("git", "-C", workDir, "add", ".").Run()
+		cmd := exec.Command("git", "-C", workDir, "commit", "-m", "implement fix")
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Claude",
+			"GIT_AUTHOR_EMAIL=claude@test.com",
+			"GIT_COMMITTER_NAME=Claude",
+			"GIT_COMMITTER_EMAIL=claude@test.com",
+		)
+		cmd.Run()
+		exec.Command("git", "-C", workDir, "push", "origin", "HEAD", "--force").Run()
 
 		if f.onClaudeRun != nil {
 			f.onClaudeRun()
@@ -328,13 +338,17 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 		slog.Default(),
 	)
 
-	// === Phase 1: New issue appears, Claude implements it, agent commits/pushes/creates PR ===
+	// === Phase 1: New issue appears, Claude implements it and creates PR ===
 	gh.addIssue(Issue{Number: 42, Title: "Fix the bug", Body: "It's broken"})
+
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-42")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
-	// Verify state — agent should have committed, pushed, and created the PR
 	work, ok := agent.state.ActiveIssues[42]
 	if !ok {
 		t.Fatal("issue 42 should be in state after processing")
@@ -503,11 +517,15 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 		slog.Default(),
 	)
 
-	// First run: issue processed, agent creates PR
+	// First run: issue processed, Claude creates PR
 	gh.addIssue(Issue{Number: 10, Title: "Feature", Body: "Add feature"})
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-10")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work := agent.state.ActiveIssues[10]
 	if work == nil || work.PRNumber == 0 {
@@ -519,6 +537,10 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 	gh.closePR(prNum)
 
 	// Next cycle: cleanup removes it, then processNewIssues picks it up again
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-10")
+	}
+
 	agent.CleanupDone(ctx)
 
 	if _, exists := agent.state.ActiveIssues[10]; exists {
@@ -526,6 +548,7 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 	}
 
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work = agent.state.ActiveIssues[10]
 	if work == nil {
@@ -558,9 +581,13 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Setup: issue with open PR (agent creates PR)
+	// Setup: issue with open PR (Claude creates PR)
 	gh.addIssue(Issue{Number: 50, Title: "Fix", Body: "broken"})
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-50")
+	}
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 	prNum := agent.state.ActiveIssues[50].PRNumber
 
 	// Non-whitelisted user comments — should be ignored
@@ -623,11 +650,15 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Setup: issue with open PR (agent creates PR)
+	// Setup: issue with open PR (Claude creates PR)
 	gh.addIssue(Issue{Number: 77, Title: "Add feature", Body: "new feature"})
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-77")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work := agent.state.ActiveIssues[77]
 	if work == nil {
@@ -738,11 +769,15 @@ func TestIntegration_SyncWorktreePullsManualCommits(t *testing.T) {
 		slog.Default(),
 	)
 
-	// Create issue and PR (agent creates PR)
+	// Create issue and PR (Claude creates PR)
 	gh.addIssue(Issue{Number: 88, Title: "Sync test", Body: "test sync"})
+	runner.onClaudeRun = func() {
+		gh.addPR("ai/issue-88")
+	}
 
 	agent.CleanupDone(ctx)
 	agent.ProcessNewIssues(ctx)
+	runner.onClaudeRun = nil
 
 	work := agent.state.ActiveIssues[88]
 	if work == nil {
