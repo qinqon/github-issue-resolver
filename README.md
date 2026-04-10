@@ -17,71 +17,25 @@ Claude never merges; a human must approve and merge every PR.
 
 ```mermaid
 flowchart TD
-    Start([Start]) --> Cleanup
+    Start([Poll cycle]) --> Cleanup
+    Cleanup[Remove worktrees for\nmerged / closed PRs] --> Issues
+    Issues[Pick up new labeled issues\nCreate worktree + run Claude\nOpen PR] --> Reviews
+    Reviews[Address new review comments\nRun Claude + reply] --> Conflicts
+    Conflicts[Rebase dirty PRs\nor invoke Claude to resolve] --> CI
+    CI[Investigate CI failures\nRun Claude to fix or skip] --> OneShot{one-shot?}
+    OneShot -- yes --> Stop([Done])
+    OneShot -- no --> Sleep[/Sleep poll-interval/]
+    Sleep --> Start
 
-    subgraph Cleanup [CleanupDone]
-        C1[Iterate active issues] --> C2{PR merged\nor closed?}
-        C2 -- yes --> C3[Remove worktree\nRemove from state]
-        C2 -- no --> C4[Skip]
-    end
-
-    Cleanup --> NewIssues
-
-    subgraph NewIssues [ProcessNewIssues]
-        N1[List issues with label] --> N2{Already\ntracked?}
-        N2 -- yes --> N3[Skip]
-        N2 -- no --> N4["Post 'working on it' comment\nClone repo & create worktree\nBranch: ai/issue-N"]
-        N4 --> N5[Run Claude to implement fix]
-        N5 --> N6{Claude\nsucceeded?}
-        N6 -- yes --> N7[Find PR created by Claude\nTrack as pr-open]
-        N6 -- no --> N8["Add ai-failed label\nComment with error\nTrack as failed"]
-    end
-
-    NewIssues --> Reviews
-
-    subgraph Reviews [ProcessReviewComments]
-        R1[Iterate open PRs] --> R2[Fetch new review comments\nFilter by allowed reviewers]
-        R2 --> R3{New\ncomments?}
-        R3 -- no --> R4[Skip]
-        R3 -- yes --> R5["React with :eyes: to each\nSync worktree"]
-        R5 --> R6[Run Claude to address comments]
-        R6 --> R7[Post fallback reply for\nunanswered comments]
-    end
-
-    Reviews --> Conflicts
-
-    subgraph Conflicts [ProcessConflicts]
-        CF1[Iterate open PRs] --> CF2{Merge state\ndirty?}
-        CF2 -- no --> CF3[Skip]
-        CF2 -- yes --> CF4[Sync worktree\nTry git rebase origin/main]
-        CF4 --> CF5{Rebase\nsucceeded?}
-        CF5 -- yes --> CF6[Push with --force-with-lease\nComment: resolved by rebase]
-        CF5 -- no --> CF7[Abort rebase\nRun Claude to resolve]
-        CF7 --> CF8{Claude pushed\nnew commits?}
-        CF8 -- yes --> CF9[Comment: conflicts resolved]
-        CF8 -- no --> CF10[Comment: human intervention needed]
-    end
-
-    Conflicts --> CI
-
-    subgraph CI [ProcessCIFailures]
-        CI1[Iterate open PRs] --> CI2{Fix attempts\n>= 3?}
-        CI2 -- yes --> CI3[Comment: human intervention needed]
-        CI2 -- no --> CI4[Get check runs for HEAD]
-        CI4 --> CI5{Completed\nfailures?}
-        CI5 -- no --> CI6[Skip]
-        CI5 -- yes --> CI7[Fetch failing check logs\nSync worktree\nRun Claude to investigate]
-        CI7 --> CI8{Claude says\nUNRELATED?}
-        CI8 -- yes --> CI9[Comment: failure unrelated to PR]
-        CI8 -- no --> CI10{Claude\npushed fix?}
-        CI10 -- yes --> CI11[Comment: pushed a fix]
-        CI10 -- no --> CI12[Comment: could not fix]
-    end
-
-    CI --> OneShot{--one-shot?}
-    OneShot -- yes --> Stop([Stop])
-    OneShot -- no --> Sleep["Sleep(poll-interval)"]
-    Sleep --> Cleanup
+    style Start fill:#4a90d9,stroke:#2a6cb6,color:#fff
+    style Cleanup fill:#f4f1de,stroke:#c9c4a6,color:#333
+    style Issues fill:#81b29a,stroke:#5a8a72,color:#fff
+    style Reviews fill:#f2cc8f,stroke:#d4a54a,color:#333
+    style Conflicts fill:#e07a5f,stroke:#b8563f,color:#fff
+    style CI fill:#3d405b,stroke:#2b2d40,color:#fff
+    style Sleep fill:#f4f1de,stroke:#c9c4a6,color:#333
+    style OneShot fill:#f4f1de,stroke:#c9c4a6,color:#333
+    style Stop fill:#4a90d9,stroke:#2a6cb6,color:#fff
 ```
 
 ## Prerequisites
