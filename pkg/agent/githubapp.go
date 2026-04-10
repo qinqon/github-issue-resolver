@@ -45,7 +45,15 @@ func NewGitHubAppAuth(appID, installationID int64, privateKeyPath string) (*GitH
 	slug := app.GetSlug()
 	login := fmt.Sprintf("%s[bot]", slug)
 	name := app.GetName()
-	email := fmt.Sprintf("%d+%s@users.noreply.github.com", appID, slug)
+
+	// Look up the bot's actual user ID for the noreply email.
+	// The App ID != the bot user ID; using the App ID would attribute
+	// commits to the wrong GitHub user.
+	botUser, _, err := github.NewClient(&http.Client{Transport: itr}).Users.Get(context.Background(), login)
+	if err != nil {
+		return nil, fmt.Errorf("getting bot user info for %s: %w", login, err)
+	}
+	email := fmt.Sprintf("%d+%s@users.noreply.github.com", botUser.GetID(), slug)
 
 	return &GitHubAppAuth{
 		Client:    client,
