@@ -171,7 +171,8 @@ func (g *GoGitHubClient) ListPRsByHead(ctx context.Context, owner, repo, headOwn
 		head = fmt.Sprintf("%s:%s", headOwner, branch)
 	}
 	opts := &github.PullRequestListOptions{
-		Head: head,
+		Head:  head,
+		State: "all",
 	}
 
 	ghPRs, _, err := g.client.PullRequests.List(ctx, owner, repo, opts)

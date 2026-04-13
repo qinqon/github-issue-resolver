@@ -50,11 +50,31 @@ func BuildStateFromGitHub(ctx context.Context, gh GitHubClient, cfg Config, clon
 		}
 
 		if len(prs) > 0 {
-			work.PRNumber = prs[0].Number
-			work.Status = "pr-open"
-			// lastCommentID stays 0 — ProcessReviewComments uses :eyes: reaction to skip already-handled comments
-
-			logger.Info("recovered state from GitHub", "issue", issue.Number, "pr", work.PRNumber)
+			// Find the first open PR
+			var openPR *PR
+			hasMerged := false
+			for i := range prs {
+				if prs[i].State == "open" {
+					openPR = &prs[i]
+					break
+				}
+				if prs[i].Merged {
+					hasMerged = true
+				}
+			}
+			if openPR != nil {
+				work.PRNumber = openPR.Number
+				work.Status = "pr-open"
+				// lastCommentID stays 0 — ProcessReviewComments uses :eyes: reaction to skip already-handled comments
+				logger.Info("recovered state from GitHub", "issue", issue.Number, "pr", work.PRNumber)
+			} else if hasMerged {
+				// PR was merged — skip to avoid reprocessing a completed issue
+				logger.Info("skipping issue with merged PR", "issue", issue.Number, "pr", prs[0].Number)
+				continue
+			} else {
+				// PR was closed (rejected) — allow retry by treating as new
+				continue
+			}
 		} else {
 			// No PR yet — check if it has the ai-failed label
 			hasFailed := false

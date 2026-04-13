@@ -70,10 +70,15 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			// Re-check for PR if we lost track of it
 			if work.PRNumber == 0 && work.Status == "implementing" {
 				prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, work.BranchName)
-				if err == nil && len(prs) > 0 {
-					work.PRNumber = prs[0].Number
-					work.Status = "pr-open"
-					a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
+				if err == nil {
+					for _, p := range prs {
+						if p.State == "open" {
+							work.PRNumber = p.Number
+							work.Status = "pr-open"
+							a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
+							break
+						}
+					}
 				}
 			}
 			a.logger.Debug("skipping already tracked issue", "issue", issue.Number)
@@ -84,19 +89,38 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 
 		branchName := fmt.Sprintf("ai/issue-%d", issue.Number)
 
-		// Check if a PR already exists for this issue
+		// Check if a PR already exists for this issue (open, closed, or merged)
 		prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, branchName)
 		if err == nil && len(prs) > 0 {
-			a.logger.Info("PR already exists for issue", "issue", issue.Number, "pr", prs[0].Number)
-			a.state.ActiveIssues[issue.Number] = &IssueWork{
-				IssueNumber: issue.Number,
-				IssueTitle:  issue.Title,
-				BranchName:  branchName,
-				PRNumber:    prs[0].Number,
-				Status:      "pr-open",
-				CreatedAt:   time.Now(),
+			// Find the first open PR, or check if any was merged
+			var openPR *PR
+			hasMerged := false
+			for i := range prs {
+				if prs[i].State == "open" {
+					openPR = &prs[i]
+					break
+				}
+				if prs[i].Merged {
+					hasMerged = true
+				}
 			}
-			continue
+			if openPR != nil {
+				a.logger.Info("PR already exists for issue", "issue", issue.Number, "pr", openPR.Number)
+				a.state.ActiveIssues[issue.Number] = &IssueWork{
+					IssueNumber: issue.Number,
+					IssueTitle:  issue.Title,
+					BranchName:  branchName,
+					PRNumber:    openPR.Number,
+					Status:      "pr-open",
+					CreatedAt:   time.Now(),
+				}
+				continue
+			} else if hasMerged {
+				// PR was merged — skip to avoid reprocessing a completed issue
+				a.logger.Info("skipping issue with merged PR", "issue", issue.Number, "pr", prs[0].Number)
+				continue
+			}
+			// PR was closed (rejected) — fall through to allow retry
 		}
 
 		// Only post in-progress comment if we haven't already
@@ -151,10 +175,15 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 		prs, err = a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, branchName)
 		if err != nil {
 			a.logger.Error("failed to list PRs", "issue", issue.Number, "error", err)
-		} else if len(prs) > 0 {
-			work.PRNumber = prs[0].Number
-			work.Status = "pr-open"
-			a.logger.Info("found PR", "issue", issue.Number, "pr", work.PRNumber)
+		} else {
+			for _, p := range prs {
+				if p.State == "open" {
+					work.PRNumber = p.Number
+					work.Status = "pr-open"
+					a.logger.Info("found PR", "issue", issue.Number, "pr", work.PRNumber)
+					break
+				}
+			}
 		}
 
 		a.state.ActiveIssues[issue.Number] = work
