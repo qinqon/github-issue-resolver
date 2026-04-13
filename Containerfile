@@ -56,8 +56,9 @@ RUN mkdir -p /work && chmod 777 /work
 VOLUME /work
 
 # Set git config system-wide so it works with any UID (OpenShift assigns random UIDs)
+# The credential helper uses GH_TOKEN env var (set by the agent at startup)
 RUN git config --system --add safe.directory '*' \
-    && git config --system credential.helper '!gh auth token' \
+    && git config --system credential.helper '!f() { echo "protocol=https"; echo "host=github.com"; echo "username=x-access-token"; echo "password=${GH_TOKEN}"; }; f' \
     && git config --system init.defaultBranch main
 ENV GIT_TERMINAL_PROMPT=0
 ENTRYPOINT ["ai-agent"]
