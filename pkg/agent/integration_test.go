@@ -153,7 +153,7 @@ func (f *fakeGitHubClient) ListPRsByHead(_ context.Context, _, _, _, branch stri
 	defer f.state.mu.Unlock()
 	var result []PR
 	for _, pr := range f.state.prs {
-		if pr.Head == branch && pr.State == "open" {
+		if pr.Head == branch {
 			result = append(result, *pr)
 		}
 	}
