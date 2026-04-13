@@ -33,6 +33,7 @@ type GitHubClient interface {
 	GetPRReviews(ctx context.Context, owner, repo string, prNumber int, sinceID int64) ([]PRReview, error)
 	GetPRHeadCommitDate(ctx context.Context, owner, repo string, prNumber int) (time.Time, error)
 	CreatePR(ctx context.Context, owner, repo, title, body, head, base string) (int, error)
+	HasLinkedPR(ctx context.Context, owner, repo string, issueNumber int) (bool, error)
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -355,6 +356,28 @@ func (g *GoGitHubClient) CreatePR(ctx context.Context, owner, repo, title, body,
 		return 0, fmt.Errorf("creating PR: %w", err)
 	}
 	return pr.GetNumber(), nil
+}
+
+func (g *GoGitHubClient) HasLinkedPR(ctx context.Context, owner, repo string, issueNumber int) (bool, error) {
+	events, _, err := g.client.Issues.ListIssueTimeline(ctx, owner, repo, issueNumber, nil)
+	if err != nil {
+		return false, fmt.Errorf("listing issue timeline: %w", err)
+	}
+
+	for _, e := range events {
+		if e.GetEvent() != "cross-referenced" {
+			continue
+		}
+		src := e.GetSource()
+		if src == nil || src.GetIssue() == nil {
+			continue
+		}
+		// GitHub's timeline returns PRs as issues with a PullRequestLinks field
+		if src.GetIssue().IsPullRequest() && src.GetIssue().GetState() == "open" {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GetAuthenticatedUser returns the login, name, and email of the authenticated user.

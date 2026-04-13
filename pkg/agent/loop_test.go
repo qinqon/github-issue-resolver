@@ -125,6 +125,10 @@ func (m *mockGitHubClient) CreatePR(_ context.Context, _, _, _, _, _, _ string) 
 	return 100, nil
 }
 
+func (m *mockGitHubClient) HasLinkedPR(_ context.Context, _, _ string, _ int) (bool, error) {
+	return false, nil
+}
+
 func (m *mockGitHubClient) AssignIssue(_ context.Context, _, _ string, _ int, _ string) error {
 	return nil
 }
