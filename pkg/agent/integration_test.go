@@ -160,6 +160,10 @@ func (f *fakeGitHubClient) ListPRsByHead(_ context.Context, _, _, _, branch stri
 	return result, nil
 }
 
+func (f *fakeGitHubClient) HasLinkedPR(_ context.Context, _, _ string, _ int) (bool, error) {
+	return false, nil
+}
+
 func (f *fakeGitHubClient) AddPRCommentReaction(_ context.Context, _, _ string, commentID int64, reaction string) error {
 	f.state.mu.Lock()
 	defer f.state.mu.Unlock()

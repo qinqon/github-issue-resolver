@@ -123,6 +123,14 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			// PR was closed (rejected) — fall through to allow retry
 		}
 
+		// Check if any open PR already references this issue (e.g., created by a human)
+		if linked, err := a.gh.HasLinkedPR(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number); err != nil {
+			a.logger.Warn("failed to check for linked PRs", "issue", issue.Number, "error", err)
+		} else if linked {
+			a.logger.Info("skipping issue with existing linked PR", "issue", issue.Number)
+			continue
+		}
+
 		// Only post in-progress comment if we haven't already
 		if !a.hasExistingBotComment(ctx, issue.Number, "working on this issue") {
 			if err := a.gh.AssignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser); err != nil {

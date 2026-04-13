@@ -219,6 +219,87 @@ func TestListPRsByHead(t *testing.T) {
 	}
 }
 
+func TestHasLinkedPR_FindsOpenPR(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/issues/42/timeline", func(w http.ResponseWriter, r *http.Request) {
+		events := []map[string]any{
+			{
+				"event": "labeled",
+			},
+			{
+				"event": "cross-referenced",
+				"source": map[string]any{
+					"type": "issue",
+					"issue": map[string]any{
+						"number":             99,
+						"state":              "open",
+						"pull_request":       map[string]any{"url": "https://api.github.com/repos/owner/repo/pulls/99"},
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(events)
+	})
+
+	gh := setupTestClient(t, mux)
+	linked, err := gh.HasLinkedPR(context.Background(), "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !linked {
+		t.Error("expected HasLinkedPR to return true for open PR")
+	}
+}
+
+func TestHasLinkedPR_IgnoresClosedPR(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/issues/42/timeline", func(w http.ResponseWriter, r *http.Request) {
+		events := []map[string]any{
+			{
+				"event": "cross-referenced",
+				"source": map[string]any{
+					"type": "issue",
+					"issue": map[string]any{
+						"number":             99,
+						"state":              "closed",
+						"pull_request":       map[string]any{"url": "https://api.github.com/repos/owner/repo/pulls/99"},
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(events)
+	})
+
+	gh := setupTestClient(t, mux)
+	linked, err := gh.HasLinkedPR(context.Background(), "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if linked {
+		t.Error("expected HasLinkedPR to return false for closed PR")
+	}
+}
+
+func TestHasLinkedPR_NoLinkedPRs(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/issues/42/timeline", func(w http.ResponseWriter, r *http.Request) {
+		events := []map[string]any{
+			{"event": "labeled"},
+			{"event": "assigned"},
+		}
+		json.NewEncoder(w).Encode(events)
+	})
+
+	gh := setupTestClient(t, mux)
+	linked, err := gh.HasLinkedPR(context.Background(), "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if linked {
+		t.Error("expected HasLinkedPR to return false when no linked PRs")
+	}
+}
+
 func TestGetAuthenticatedUser_WithNameAndEmail(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v3/user", func(w http.ResponseWriter, r *http.Request) {
