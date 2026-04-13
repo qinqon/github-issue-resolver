@@ -194,6 +194,7 @@ func main() {
 			os.Exit(1)
 		}
 		cfg.GitHubToken = token
+		os.Setenv("GH_TOKEN", token)
 
 		logger.Info("authenticated as GitHub App", "login", appAuth.Login, "signed-off-by", cfg.SignedOffBy)
 	} else {
