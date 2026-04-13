@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 )
@@ -42,6 +43,7 @@ func (a *Agent) RefreshToken(ctx context.Context) error {
 		return fmt.Errorf("refreshing GitHub token: %w", err)
 	}
 	a.cfg.GitHubToken = token
+	os.Setenv("GH_TOKEN", token)
 	return nil
 }
 
