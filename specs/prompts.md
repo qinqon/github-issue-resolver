@@ -6,8 +6,8 @@ Tells Claude to:
 - Read Claude.md for conventions
 - Implement the fix, run `make lint` and `make test`
 - Commit (no trailing period, 72 char body)
-- Create PR via `gh pr create` with `/kind`, `Fixes #N`, release-note block
 - If signedOffBy is non-empty, add `Signed-off-by:` to every commit message
+- Do NOT push, create PRs, or amend — the agent handles that automatically
 
 ## `buildReviewResponsePrompt(work IssueWork, comments []ReviewComment, signedOffBy string) string`
 
@@ -21,5 +21,5 @@ Tells Claude to:
 
 ## Tests (`prompt_test.go`)
 
-- `TestBuildImplementationPrompt` -- verifies issue number, title, body are interpolated; `/kind` and `release-note` instructions present
+- `TestBuildImplementationPrompt` -- verifies issue number, title, body are interpolated; verifies push/PR instructions are absent
 - `TestBuildReviewResponsePrompt` -- verifies each comment's file/line/body is included

@@ -16,7 +16,7 @@ type Agent struct {
 ## Methods
 
 - `(a *Agent) CleanupDone(ctx)` -- remove worktrees for merged/closed PRs
-- `(a *Agent) ProcessNewIssues(ctx)` -- find labeled issues, create worktrees, run Claude, create PRs
+- `(a *Agent) ProcessNewIssues(ctx)` -- find labeled issues, create worktrees, run Claude, push branch, create PR via GitHub API
 - `(a *Agent) ProcessReviewComments(ctx)` -- check for new review comments, run Claude to address them
 - `(a *Agent) isAllowedReviewer(user string) bool` -- checks if user is in reviewers whitelist (empty = allow all)
 - `(a *Agent) HasWatchedPRs() bool` -- returns true if `cfg.WatchPRs` is non-empty
@@ -31,6 +31,7 @@ When `--watch-prs` is set, `BootstrapWatchedPRs` runs instead of `ProcessNewIssu
 ### ProcessNewIssues behavior
 - Skips issues already in state (unless `prNumber == 0` and status is `implementing`, in which case it re-checks for the PR)
 - Cleans up stale worktrees/branches before creating new ones
+- After Claude finishes, the agent pushes the branch and creates the PR (Claude does NOT push or create PRs)
 
 ### ProcessReviewComments behavior
 - Filters comments through the reviewers whitelist
@@ -43,7 +44,7 @@ When `--watch-prs` is set, `BootstrapWatchedPRs` runs instead of `ProcessNewIssu
 All interfaces mocked:
 
 - `TestProcessNewIssues_SkipsAlreadyTracked` -- issue in state is not re-processed
-- `TestProcessNewIssues_HappyPath` -- creates worktree, runs claude, extracts PR, updates state
+- `TestProcessNewIssues_HappyPath` -- creates worktree, runs claude, agent pushes and creates PR, updates state
 - `TestProcessNewIssues_ClaudeFailure` -- adds `ai-failed` label, comments on issue
 - `TestProcessReviewComments_NoNewComments` -- no action taken
 - `TestProcessReviewComments_AddressesHumanComments` -- runs claude, updates lastCommentID
