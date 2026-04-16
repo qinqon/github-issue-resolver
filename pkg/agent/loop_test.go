@@ -252,9 +252,7 @@ func TestProcessNewIssues_RechecksForPR(t *testing.T) {
 func TestProcessNewIssues_HappyPath(t *testing.T) {
 	claudeResult := streamResultJSON(ClaudeResult{Result: "Fixed it"})
 	gh := &mockGitHubClient{
-		issues:         []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
-		prs:            []PR{{Number: 100, State: "open", Head: "ai/issue-42"}},
-		prsAfterNCalls: 1, // skip first call (early check), return PR on second (after Claude)
+		issues: []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
 	}
 	runner := &mockCommandRunner{stdout: claudeResult}
 	wt := &mockWorktreeManager{}
@@ -270,6 +268,7 @@ func TestProcessNewIssues_HappyPath(t *testing.T) {
 	if !ok {
 		t.Fatal("issue 42 not in state")
 	}
+	// CreatePR mock returns 100
 	if work.PRNumber != 100 {
 		t.Errorf("expected PR 100, got %d", work.PRNumber)
 	}
