@@ -192,8 +192,20 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			continue
 		}
 
-		// Push the branch
-		if err := a.gitPush(ctx, worktreePath, false); err != nil {
+		// Squash all commits into a single commit for cleaner git history
+		if err := a.gitSquashCommits(ctx, worktreePath, issue.Number, issue.Title); err != nil {
+			a.logger.Error("failed to squash commits", "issue", issue.Number, "error", err)
+			work.Status = "failed"
+			a.state.ActiveIssues[issue.Number] = work
+			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+				fmt.Sprintf("AI agent failed to squash commits: %v\n\n%s", err, botMarker))
+			continue
+		}
+
+		// Push the branch (force push because squashing rewrites history)
+		if err := a.gitPush(ctx, worktreePath, true); err != nil {
 			a.logger.Error("failed to push branch", "issue", issue.Number, "error", err)
 			work.Status = "failed"
 			a.state.ActiveIssues[issue.Number] = work
@@ -820,6 +832,25 @@ func (a *Agent) gitAmendAll(ctx context.Context, worktreePath string) error {
 	}
 	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "commit", "--amend", "--no-edit"); err != nil {
 		return fmt.Errorf("git commit --amend: %w (stderr: %s)", err, string(stderr))
+	}
+	return nil
+}
+
+// gitSquashCommits squashes all commits since the base branch into a single commit.
+func (a *Agent) gitSquashCommits(ctx context.Context, worktreePath string, issueNumber int, issueTitle string) error {
+	// Reset to base branch, keeping all changes staged
+	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "reset", "--soft", a.originDefaultBranch()); err != nil {
+		return fmt.Errorf("git reset --soft: %w (stderr: %s)", err, string(stderr))
+	}
+
+	// Create a single commit with a meaningful message
+	commitMsg := fmt.Sprintf("Fix issue #%d: %s", issueNumber, issueTitle)
+	if a.cfg.SignedOffBy != "" {
+		commitMsg += fmt.Sprintf("\n\nSigned-off-by: %s", a.cfg.SignedOffBy)
+	}
+
+	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "commit", "-m", commitMsg); err != nil {
+		return fmt.Errorf("git commit: %w (stderr: %s)", err, string(stderr))
 	}
 	return nil
 }
