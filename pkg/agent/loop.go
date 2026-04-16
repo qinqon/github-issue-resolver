@@ -165,8 +165,7 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			CreatedAt:    time.Now(),
 		}
 
-		pushRemote := a.pushRemoteName()
-		prompt := buildImplementationPrompt(issue, a.cfg.SignedOffBy, a.cfg.Owner, a.cfg.Repo, pushRemote)
+		prompt := buildImplementationPrompt(issue, a.cfg.SignedOffBy)
 		_, err = runClaude(ctx, a.runner, worktreePath, prompt, a.cfg, a.logger, false)
 		if err != nil {
 			a.logger.Error("claude failed", "issue", issue.Number, "error", err)
@@ -180,23 +179,55 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			continue
 		}
 
-		_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
-
-		// Find the PR created by Claude
-		prs, err = a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, branchName)
-		if err != nil {
-			a.logger.Error("failed to list PRs", "issue", issue.Number, "error", err)
-		} else {
-			for _, p := range prs {
-				if p.State == "open" {
-					work.PRNumber = p.Number
-					work.Status = "pr-open"
-					a.logger.Info("found PR", "issue", issue.Number, "pr", work.PRNumber)
-					break
-				}
-			}
+		// Check if Claude produced any commits
+		logOut, _, _ := a.runner.Run(ctx, worktreePath, "git", "log", a.originDefaultBranch()+"..HEAD", "--oneline")
+		if len(strings.TrimSpace(string(logOut))) == 0 {
+			a.logger.Warn("claude finished but produced no commits", "issue", issue.Number)
+			work.Status = "failed"
+			a.state.ActiveIssues[issue.Number] = work
+			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+				fmt.Sprintf("AI agent finished but produced no commits for this issue.\n\n%s", botMarker))
+			continue
 		}
 
+		// Push the branch
+		if err := a.gitPush(ctx, worktreePath, false); err != nil {
+			a.logger.Error("failed to push branch", "issue", issue.Number, "error", err)
+			work.Status = "failed"
+			a.state.ActiveIssues[issue.Number] = work
+			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+				fmt.Sprintf("AI agent failed to push branch: %v\n\n%s", err, botMarker))
+			continue
+		}
+
+		// Create PR
+		prHead := branchName
+		if a.cfg.GitHubHeadOwner != "" && a.cfg.GitHubHeadOwner != a.cfg.Owner {
+			prHead = a.cfg.GitHubHeadOwner + ":" + branchName
+		}
+		prTitle := issue.Title
+		prBody := a.buildPRBody(ctx, worktreePath, issue.Number)
+		prNumber, err := a.gh.CreatePR(ctx, a.cfg.Owner, a.cfg.Repo, prTitle, prBody, prHead, a.defaultBranch())
+		if err != nil {
+			a.logger.Error("failed to create PR", "issue", issue.Number, "error", err)
+			work.Status = "failed"
+			a.state.ActiveIssues[issue.Number] = work
+			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
+			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+				fmt.Sprintf("AI agent failed to create PR: %v\n\n%s", err, botMarker))
+			continue
+		}
+
+		work.PRNumber = prNumber
+		work.Status = "pr-open"
+		a.logger.Info("created PR", "issue", issue.Number, "pr", prNumber)
+
+		_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
 		a.state.ActiveIssues[issue.Number] = work
 	}
 }
@@ -694,6 +725,14 @@ func (a *Agent) originDefaultBranch() string {
 		return wtm.OriginDefaultBranch()
 	}
 	return "origin/main"
+}
+
+// defaultBranch returns the default branch name (e.g. "main", "master").
+func (a *Agent) defaultBranch() string {
+	if wtm, ok := a.worktrees.(*GitWorktreeManager); ok {
+		return wtm.DefaultBranch()
+	}
+	return "main"
 }
 
 // buildPRBody constructs a PR description from the git log of the branch.

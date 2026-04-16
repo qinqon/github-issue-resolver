@@ -2,10 +2,10 @@ package agent
 
 import "fmt"
 
-func buildImplementationPrompt(issue Issue, signedOffBy, owner, repo, pushRemote string) string {
+func buildImplementationPrompt(issue Issue, signedOffBy string) string {
 	signoff := ""
 	if signedOffBy != "" {
-		signoff = fmt.Sprintf("\n6. Add \"Signed-off-by: %s\" as a trailer in every commit message (do NOT use git commit -s, write it directly in the message)", signedOffBy)
+		signoff = fmt.Sprintf("\n5. Add \"Signed-off-by: %s\" as a trailer in every commit message (do NOT use git commit -s, write it directly in the message)", signedOffBy)
 	}
 
 	return fmt.Sprintf(`You are resolving GitHub issue #%d.
@@ -24,14 +24,10 @@ Instructions:
 1. Read CLAUDE.md for project conventions
 2. Implement the fix for this issue
 3. Run "make lint" and "make test" to verify your changes
-4. Commit your changes with a descriptive message (no trailing period, wrap body at 72 chars)
-5. Push to the remote using "git push %s HEAD --force"
-7. Create a PR using "gh pr create --repo %s/%s" with:
-   - "Fixes #%d" in the PR body
-   - If .github/PULL_REQUEST_TEMPLATE.md exists in the repo, follow its format for the PR body%s
+4. Commit your changes with a descriptive message (no trailing period, wrap body at 72 chars)%s
 
-Do not merge the PR. Only create it.`,
-		issue.Number, issue.Title, issue.Body, pushRemote, owner, repo, issue.Number, signoff)
+Do NOT push, create PRs, or amend — the agent handles that automatically.`,
+		issue.Number, issue.Title, issue.Body, signoff)
 }
 
 func buildReviewResponsePrompt(work IssueWork, comments []ReviewComment, reviews []PRReview, owner, repo string) string {
