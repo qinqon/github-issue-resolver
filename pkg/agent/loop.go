@@ -192,20 +192,8 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			continue
 		}
 
-		// Squash all commits into a single commit before pushing
-		if err := a.gitSquashCommits(ctx, worktreePath, issue.Number, issue.Title); err != nil {
-			a.logger.Error("failed to squash commits", "issue", issue.Number, "error", err)
-			work.Status = "failed"
-			a.state.ActiveIssues[issue.Number] = work
-			_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser)
-			_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, "ai-failed")
-			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
-				fmt.Sprintf("AI agent failed to squash commits: %v\n\n%s", err, botMarker))
-			continue
-		}
-
-		// Push the branch (force push because squashing rewrites history)
-		if err := a.gitPush(ctx, worktreePath, true); err != nil {
+		// Push the branch
+		if err := a.gitPush(ctx, worktreePath, false); err != nil {
 			a.logger.Error("failed to push branch", "issue", issue.Number, "error", err)
 			work.Status = "failed"
 			a.state.ActiveIssues[issue.Number] = work
@@ -409,15 +397,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
-		// Check if we already investigated this SHA (in-memory dedup)
-		if work.LastCheckedCISHA == headSHA {
-			continue
-		}
-
-		// Fallback: check if we already investigated this SHA by looking for a bot comment
-		// (handles state recovery after restarts)
+		// Check if we already investigated this SHA by looking for a bot comment
 		if a.alreadyCheckedCI(ctx, work.PRNumber, headSHA) {
-			work.LastCheckedCISHA = headSHA
 			continue
 		}
 
@@ -468,51 +449,18 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Error("claude failed to investigate CI", "pr", work.PRNumber, "error", err)
 			work.CIFixAttempts++
 			work.LastCIStatus = "failure"
-			work.LastCheckedCISHA = headSHA
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-				fmt.Sprintf("CI investigation failed for commit %s: %v\n\n%s", shortSHA(headSHA), err, botMarker)); err != nil {
-				a.logger.Error("failed to post CI investigation error comment", "pr", work.PRNumber, "error", err)
-			}
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI investigation failed for commit %s: %v\n\n%s", shortSHA(headSHA), err, botMarker))
 			continue
 		}
 
-		// Strip markdown formatting (bold, italic) before checking prefix
-		cleaned := strings.TrimLeft(strings.TrimSpace(result.Result), "*_")
-		if strings.HasPrefix(cleaned, "UNRELATED") {
+		if strings.HasPrefix(strings.TrimSpace(result.Result), "UNRELATED") {
 			a.logger.Info("CI failure is unrelated to PR changes", "pr", work.PRNumber)
-			explanation := strings.TrimPrefix(cleaned, "UNRELATED")
+			explanation := strings.TrimPrefix(strings.TrimSpace(result.Result), "UNRELATED")
 			explanation = strings.TrimSpace(explanation)
 			comment := fmt.Sprintf("CI check failed on commit %s but appears unrelated to this PR's changes.\n\n%s\n\n%s", shortSHA(headSHA), explanation, botMarker)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, comment); err != nil {
-				a.logger.Error("failed to post CI unrelated comment", "pr", work.PRNumber, "error", err)
-			}
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, comment)
 			work.LastCIStatus = "unrelated-failure"
-			work.LastCheckedCISHA = headSHA
-
-			// Create a flaky CI issue if configured
-			if a.cfg.CreateFlakyIssues {
-				issueTitle := fmt.Sprintf("Flaky CI: %s", failures[0].Name)
-				issueBody := fmt.Sprintf("A CI failure was detected that appears unrelated to PR changes.\n\n"+
-					"**Detected in PR**: #%d\n"+
-					"**Commit**: %s\n"+
-					"**Failed check**: %s\n\n"+
-					"**Analysis**:\n%s\n\n"+
-					"**Check output**:\n```\n%s\n```\n\n"+
-					"%s",
-					work.PRNumber, shortSHA(headSHA), failures[0].Name, explanation, failures[0].Output, botMarker)
-				issueNum, err := a.gh.CreateIssue(ctx, a.cfg.Owner, a.cfg.Repo, issueTitle, issueBody, []string{"flaky-test"})
-				if err != nil {
-					a.logger.Error("failed to create flaky CI issue", "error", err)
-				} else {
-					a.logger.Info("created flaky CI issue", "issue", issueNum)
-					// Update the PR comment to reference the created issue
-					if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-						fmt.Sprintf("Opened issue #%d to track this flaky test.\n\n%s", issueNum, botMarker)); err != nil {
-						a.logger.Error("failed to post flaky issue reference comment", "pr", work.PRNumber, "error", err)
-					}
-				}
-			}
-
 			continue
 		}
 
@@ -530,20 +478,15 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 		if pushed {
 			a.logger.Info("CI failure is related, pushed a fix", "pr", work.PRNumber)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-				fmt.Sprintf("CI was failing on commit %s. Pushed a fix.\n\n%s", shortSHA(headSHA), botMarker)); err != nil {
-				a.logger.Error("failed to post CI fix comment", "pr", work.PRNumber, "error", err)
-			}
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI was failing on commit %s. Pushed a fix.\n\n%s", shortSHA(headSHA), botMarker))
 		} else {
 			a.logger.Warn("Claude said RELATED but no changes to push", "pr", work.PRNumber)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-				fmt.Sprintf("CI is failing on commit %s. Investigated but could not push a fix.\n\n%s", shortSHA(headSHA), botMarker)); err != nil {
-				a.logger.Error("failed to post CI investigation comment", "pr", work.PRNumber, "error", err)
-			}
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("CI is failing on commit %s. Investigated but could not push a fix.\n\n%s", shortSHA(headSHA), botMarker))
 		}
 		work.CIFixAttempts++
 		work.LastCIStatus = "failure"
-		work.LastCheckedCISHA = headSHA
 	}
 }
 
@@ -858,37 +801,6 @@ func (a *Agent) gitAmendAll(ctx context.Context, worktreePath string) error {
 	return nil
 }
 
-// gitSquashCommits squashes all commits since the origin default branch into a single commit.
-func (a *Agent) gitSquashCommits(ctx context.Context, worktreePath string, issueNumber int, issueTitle string) error {
-	// Get all commit messages since origin default branch
-	logOut, _, err := a.runner.Run(ctx, worktreePath, "git", "log", a.originDefaultBranch()+"..HEAD", "--format=%B")
-	if err != nil {
-		return fmt.Errorf("getting commit messages: %w", err)
-	}
-	commitMessages := strings.TrimSpace(string(logOut))
-
-	// Reset to origin default branch while keeping changes staged
-	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "reset", "--soft", a.originDefaultBranch()); err != nil {
-		return fmt.Errorf("git reset --soft: %w (stderr: %s)", err, string(stderr))
-	}
-
-	// Create a single commit with a meaningful message
-	commitMsg := fmt.Sprintf("Fix #%d: %s", issueNumber, issueTitle)
-	if commitMessages != "" {
-		// Include original commit messages in the body
-		commitMsg += "\n\n" + commitMessages
-	}
-	if a.cfg.SignedOffBy != "" {
-		commitMsg += fmt.Sprintf("\n\nSigned-off-by: %s", a.cfg.SignedOffBy)
-	}
-
-	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "commit", "-m", commitMsg); err != nil {
-		return fmt.Errorf("git commit after squash: %w (stderr: %s)", err, string(stderr))
-	}
-
-	return nil
-}
-
 // deleteRemoteBranch removes a branch from the push remote.
 func (a *Agent) deleteRemoteBranch(ctx context.Context, worktreePath, branchName string) {
 	pushRemote := "origin"
@@ -919,7 +831,7 @@ func (a *Agent) gitPush(ctx context.Context, worktreePath string, force bool) er
 
 	args := []string{"push", pushRemote, "HEAD:" + branch}
 	if force {
-		args = append(args, "--force-with-lease")
+		args = append(args, "--force")
 	}
 
 	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", args...); err != nil {
@@ -941,4 +853,3 @@ func (a *Agent) isAllowedReviewer(user string) bool {
 	}
 	return false
 }
-

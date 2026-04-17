@@ -8,12 +8,26 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qinqon/github-issue-resolver/pkg/agent"
 )
+
+func getCommitSHA() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
+}
 
 func envOrDefault(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -22,7 +36,7 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-func parseConfig() agent.Config {
+func parseConfig() (agent.Config, string) {
 	cfg := agent.Config{}
 
 	var repoFlag string
@@ -49,10 +63,11 @@ func parseConfig() agent.Config {
 	var logFile string
 	flag.StringVar(&logFile, "log-file", os.Getenv("AI_AGENT_LOG_FILE"), "Log file path (default: stderr)")
 
-	flag.BoolVar(&cfg.CreateFlakyIssues, "create-flaky-issues", envOrDefault("AI_AGENT_CREATE_FLAKY_ISSUES", "") == "true", "Create issues for unrelated CI failures (opt-in)")
-
 	var forkFlag string
 	flag.StringVar(&forkFlag, "fork", envOrDefault("AI_AGENT_FORK", ""), "Fork repo as owner/repo for pushing (e.g. qinqon/ovn-kubernetes)")
+
+	var exitOnNewVersionRepo string
+	flag.StringVar(&exitOnNewVersionRepo, "exit-on-new-version", os.Getenv("AI_AGENT_EXIT_ON_NEW_VERSION"), "Exit when new version detected (owner/repo of this agent's repo)")
 
 	// Identity flags (optional, auto-detected from auth when not set)
 	flag.StringVar(&cfg.GitHubUser, "github-user", os.Getenv("GITHUB_USER"), "GitHub username (e.g. myapp[bot])")
@@ -158,7 +173,7 @@ func parseConfig() agent.Config {
 		}
 	}
 
-	return cfg
+	return cfg, exitOnNewVersionRepo
 }
 
 func parseDuration(s string) time.Duration {
@@ -198,10 +213,42 @@ func setupLogger(level, logFile string) (*slog.Logger, func()) {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: logLevel})), cleanup
 }
 
+func shouldExitForNewVersion(ctx context.Context, ghClient *agent.GoGitHubClient, exitOnNewVersionRepo, currentSHA string, logger *slog.Logger) bool {
+	// Skip if commitSHA is empty (dev build) or flag not set
+	if currentSHA == "" || exitOnNewVersionRepo == "" {
+		return false
+	}
+
+	// Parse owner/repo
+	parts := strings.SplitN(exitOnNewVersionRepo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		logger.Warn("invalid --exit-on-new-version format, skipping version check", "value", exitOnNewVersionRepo)
+		return false
+	}
+	owner, repo := parts[0], parts[1]
+
+	// Get the latest commit SHA from the default branch
+	latestSHA, err := ghClient.GetDefaultBranchSHA(ctx, owner, repo)
+	if err != nil {
+		logger.Warn("failed to check for new version", "error", err)
+		return false
+	}
+
+	// If the SHAs differ, we should exit
+	if latestSHA != currentSHA {
+		logger.Info("detected version mismatch", "current", currentSHA, "latest", latestSHA)
+		return true
+	}
+
+	return false
+}
+
 func main() {
-	cfg := parseConfig()
+	cfg, exitOnNewVersionRepo := parseConfig()
 	logger, closeLog := setupLogger(cfg.LogLevel, cfg.LogFile)
 	defer closeLog()
+
+	commitSHA := getCommitSHA()
 
 	if cfg.VertexRegion == "" || cfg.VertexProject == "" {
 		logger.Error("CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID are required")
@@ -346,6 +393,10 @@ func main() {
 	)
 
 	runLoop(ctx, a, logger)
+	if shouldExitForNewVersion(ctx, ghClient, exitOnNewVersionRepo, commitSHA, logger) {
+		logger.Info("new version detected, exiting for restart")
+		return
+	}
 
 	if cfg.OneShot {
 		return
@@ -361,6 +412,10 @@ func main() {
 			return
 		case <-ticker.C:
 			runLoop(ctx, a, logger)
+			if shouldExitForNewVersion(ctx, ghClient, exitOnNewVersionRepo, commitSHA, logger) {
+				logger.Info("new version detected, exiting for restart")
+				return
+			}
 		}
 	}
 }

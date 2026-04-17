@@ -5,7 +5,7 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -o /ai-agent ./cmd/ai-agent
+    CGO_ENABLED=0 go build -ldflags="-X main.commitSHA=$(git rev-parse HEAD)" -o /ai-agent ./cmd/ai-agent
 
 # Stage 2: Runtime
 FROM node:22-slim

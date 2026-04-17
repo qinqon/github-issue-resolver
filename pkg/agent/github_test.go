@@ -352,39 +352,23 @@ func TestGetAuthenticatedUser_FallbackToLogin(t *testing.T) {
 	}
 }
 
-func TestCreateIssue(t *testing.T) {
-	var receivedTitle, receivedBody string
-	var receivedLabels []string
+func TestGetDefaultBranchSHA(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v3/repos/owner/repo/issues", func(w http.ResponseWriter, r *http.Request) {
-		var req github.IssueRequest
-		json.NewDecoder(r.Body).Decode(&req)
-		receivedTitle = req.GetTitle()
-		receivedBody = req.GetBody()
-		receivedLabels = *req.Labels
-		issue := &github.Issue{
-			Number: github.Ptr(123),
-			Title:  req.Title,
-			Body:   req.Body,
+	mux.HandleFunc("/api/v3/repos/owner/repo/commits", func(w http.ResponseWriter, r *http.Request) {
+		commits := []*github.RepositoryCommit{
+			{
+				SHA: github.Ptr("abc123def456"),
+			},
 		}
-		json.NewEncoder(w).Encode(issue)
+		json.NewEncoder(w).Encode(commits)
 	})
 
 	gh := setupTestClient(t, mux)
-	issueNum, err := gh.CreateIssue(context.Background(), "owner", "repo", "Test Issue", "Test body", []string{"flaky-test"})
+	sha, err := gh.GetDefaultBranchSHA(context.Background(), "owner", "repo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if issueNum != 123 {
-		t.Errorf("expected issue number 123, got %d", issueNum)
-	}
-	if receivedTitle != "Test Issue" {
-		t.Errorf("expected title 'Test Issue', got %q", receivedTitle)
-	}
-	if receivedBody != "Test body" {
-		t.Errorf("expected body 'Test body', got %q", receivedBody)
-	}
-	if len(receivedLabels) != 1 || receivedLabels[0] != "flaky-test" {
-		t.Errorf("expected labels ['flaky-test'], got %v", receivedLabels)
+	if sha != "abc123def456" {
+		t.Errorf("expected SHA 'abc123def456', got %q", sha)
 	}
 }

@@ -7,7 +7,7 @@ CONTAINER_CMD ?= podman
 .PHONY: build test lint image push clean
 
 build:
-	go build -o ai-agent ./cmd/ai-agent
+	go build -ldflags="-X main.commitSHA=$$(git rev-parse HEAD)" -o ai-agent ./cmd/ai-agent
 
 test:
 	go test ./...

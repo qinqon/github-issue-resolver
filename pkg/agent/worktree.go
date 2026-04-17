@@ -173,9 +173,9 @@ func (g *GitWorktreeManager) SyncWorktree(ctx context.Context, worktreePath stri
 	}
 	branch := strings.TrimSpace(string(branchOut))
 
-	// Pull latest from the push remote, rebasing to preserve external contributions
+	// Try to reset to the push remote's branch (fork or origin)
 	pushRemote := g.PushRemote()
-	_, _, err = g.runner.Run(ctx, worktreePath, "git", "pull", "--rebase", pushRemote, branch)
+	_, stderr, err = g.runner.Run(ctx, worktreePath, "git", "reset", "--hard", pushRemote+"/"+branch)
 	if err != nil {
 		// Branch may not exist on the push remote yet, that's OK
 		return nil

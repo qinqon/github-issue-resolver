@@ -4,30 +4,27 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"testing"
 	"time"
 )
 
 // mockGitHubClient implements GitHubClient for testing.
 type mockGitHubClient struct {
-	issues          []Issue
-	prComments      []ReviewComment
-	issueComments   []ReviewComment
-	prState         string
-	prs             []PR
-	addedComments   []string
-	addedLabels     []string
-	removedLabels   []string
-	addedReactions  []string
-	checkRuns       []CheckRun
-	prHeadSHAs      []string // returns these in sequence; if empty returns "abc123"
-	prsAfterNCalls  int      // only return PRs after this many ListPRsByHead calls
-	prsCallCount    int
-	mergeableState  string  // mergeable state to return from GetPRMergeable (default: "clean")
-	prBehind        bool    // whether IsPRBehind returns true
-	createdIssues   []Issue // tracks issues created via CreateIssue
-	nextIssueNumber int     // next issue number to return (defaults to 1)
+	issues        []Issue
+	prComments    []ReviewComment
+	issueComments []ReviewComment
+	prState       string
+	prs           []PR
+	addedComments  []string
+	addedLabels    []string
+	removedLabels  []string
+	addedReactions []string
+	checkRuns      []CheckRun
+	prHeadSHAs     []string // returns these in sequence; if empty returns "abc123"
+	prsAfterNCalls int      // only return PRs after this many ListPRsByHead calls
+	prsCallCount   int
+	mergeableState string   // mergeable state to return from GetPRMergeable (default: "clean")
+	prBehind       bool     // whether IsPRBehind returns true
 
 	listIssuesErr error
 }
@@ -156,21 +153,6 @@ func (m *mockGitHubClient) AssignIssue(_ context.Context, _, _ string, _ int, _ 
 
 func (m *mockGitHubClient) UnassignIssue(_ context.Context, _, _ string, _ int, _ string) error {
 	return nil
-}
-
-func (m *mockGitHubClient) CreateIssue(_ context.Context, _, _ string, title, body string, labels []string) (int, error) {
-	if m.nextIssueNumber == 0 {
-		m.nextIssueNumber = 1
-	}
-	issueNum := m.nextIssueNumber
-	m.nextIssueNumber++
-	m.createdIssues = append(m.createdIssues, Issue{
-		Number: issueNum,
-		Title:  title,
-		Body:   body,
-		Labels: labels,
-	})
-	return issueNum, nil
 }
 
 // mockWorktreeManager implements WorktreeManager for testing.
@@ -648,81 +630,6 @@ func TestProcessCIFailures_SkipsPendingCI(t *testing.T) {
 	}
 }
 
-func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
-	claudeResult := streamResultJSON(ClaudeResult{Result: "UNRELATED The test database connection times out intermittently"})
-	gh := &mockGitHubClient{
-		checkRuns: []CheckRun{
-			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
-		},
-	}
-	runner := &mockCommandRunner{stdout: claudeResult}
-	wt := &mockWorktreeManager{}
-
-	agent := newTestAgent(gh, runner, wt)
-	agent.cfg.CreateFlakyIssues = true // Enable flaky issue creation
-	agent.state.ActiveIssues[42] = &IssueWork{
-		IssueNumber:  42,
-		IssueTitle:   "Fix bug",
-		PRNumber:     100,
-		BranchName:   "ai/issue-42",
-		Status:       "pr-open",
-		WorktreePath: "/tmp/worktree",
-	}
-
-	agent.ProcessCIFailures(context.Background())
-
-	// Check that a flaky issue was created
-	if len(gh.createdIssues) != 1 {
-		t.Fatalf("expected 1 created issue, got %d", len(gh.createdIssues))
-	}
-	issue := gh.createdIssues[0]
-	if issue.Title != "Flaky CI: integration-tests" {
-		t.Errorf("expected title 'Flaky CI: integration-tests', got %q", issue.Title)
-	}
-	if len(issue.Labels) != 1 || issue.Labels[0] != "flaky-test" {
-		t.Errorf("expected labels ['flaky-test'], got %v", issue.Labels)
-	}
-
-	// Check that a comment was added to the PR
-	if len(gh.addedComments) != 2 {
-		t.Fatalf("expected 2 comments (unrelated + issue link), got %d", len(gh.addedComments))
-	}
-}
-
-func TestProcessCIFailures_SkipsFlakyIssueWhenDisabled(t *testing.T) {
-	claudeResult := streamResultJSON(ClaudeResult{Result: "UNRELATED The test database connection times out intermittently"})
-	gh := &mockGitHubClient{
-		checkRuns: []CheckRun{
-			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
-		},
-	}
-	runner := &mockCommandRunner{stdout: claudeResult}
-	wt := &mockWorktreeManager{}
-
-	agent := newTestAgent(gh, runner, wt)
-	agent.cfg.CreateFlakyIssues = false // Disabled by default
-	agent.state.ActiveIssues[42] = &IssueWork{
-		IssueNumber:  42,
-		IssueTitle:   "Fix bug",
-		PRNumber:     100,
-		BranchName:   "ai/issue-42",
-		Status:       "pr-open",
-		WorktreePath: "/tmp/worktree",
-	}
-
-	agent.ProcessCIFailures(context.Background())
-
-	// Check that no flaky issue was created
-	if len(gh.createdIssues) != 0 {
-		t.Errorf("expected 0 created issues when feature is disabled, got %d", len(gh.createdIssues))
-	}
-
-	// Check that only one comment was added (the unrelated notice)
-	if len(gh.addedComments) != 1 {
-		t.Fatalf("expected 1 comment (unrelated notice), got %d", len(gh.addedComments))
-	}
-}
-
 func TestShouldRunReaction_EmptyAllowsAll(t *testing.T) {
 	agent := newTestAgent(&mockGitHubClient{}, &mockCommandRunner{}, &mockWorktreeManager{})
 	// No reactions configured — all should be allowed
@@ -957,70 +864,5 @@ func TestHasWatchedPRs(t *testing.T) {
 	agent.cfg.WatchPRs = []int{123}
 	if !agent.HasWatchedPRs() {
 		t.Error("expected true with watched PRs")
-	}
-}
-func TestProcessNewIssues_SquashesCommits(t *testing.T) {
-	claudeResult := streamResultJSON(ClaudeResult{Result: "Fixed it"})
-	gh := &mockGitHubClient{
-		issues: []Issue{{Number: 42, Title: "Fix the bug", Body: "broken"}},
-	}
-	runner := &mockCommandRunner{stdout: claudeResult}
-	wt := &mockWorktreeManager{}
-
-	agent := newTestAgent(gh, runner, wt)
-	agent.cfg.SignedOffBy = "Test User <test@example.com>"
-	agent.ProcessNewIssues(context.Background())
-
-	// Verify git reset --soft was called to squash commits
-	foundReset := false
-	foundCommit := false
-	foundForcePush := false
-	for _, c := range runner.calls {
-		if c.Name == "git" && len(c.Args) >= 2 {
-			if c.Args[0] == "reset" && c.Args[1] == "--soft" {
-				foundReset = true
-				// Should reset to origin/main
-				if len(c.Args) >= 3 && c.Args[2] != "origin/main" {
-					t.Errorf("expected reset to origin/main, got %v", c.Args)
-				}
-			}
-			if c.Args[0] == "commit" && c.Args[1] == "-m" {
-				foundCommit = true
-				// Verify commit message includes issue number
-				if len(c.Args) >= 3 {
-					commitMsg := c.Args[2]
-					if !strings.Contains(commitMsg, "Fix #42") {
-						t.Errorf("expected commit message to contain 'Fix #42', got: %s", commitMsg)
-					}
-					if !strings.Contains(commitMsg, "Signed-off-by") {
-						t.Errorf("expected commit message to contain 'Signed-off-by', got: %s", commitMsg)
-					}
-				}
-			}
-			if c.Args[0] == "push" {
-				// Should be force-with-lease push after squashing
-				hasForce := false
-				for _, arg := range c.Args {
-					if arg == "--force-with-lease" {
-						hasForce = true
-						foundForcePush = true
-						break
-					}
-				}
-				if !hasForce {
-					t.Error("expected force-with-lease push after squashing commits")
-				}
-			}
-		}
-	}
-
-	if !foundReset {
-		t.Error("expected git reset --soft to be called for commit squashing")
-	}
-	if !foundCommit {
-		t.Error("expected git commit to be called after squashing")
-	}
-	if !foundForcePush {
-		t.Error("expected git push --force-with-lease after squashing")
 	}
 }
