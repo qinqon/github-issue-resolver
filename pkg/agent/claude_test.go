@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -18,10 +19,13 @@ type mockCommandRunner struct {
 	stdout []byte
 	stderr []byte
 	err    error
+	mu     sync.Mutex
 }
 
 func (m *mockCommandRunner) Run(_ context.Context, workDir string, name string, args ...string) ([]byte, []byte, error) {
+	m.mu.Lock()
 	m.calls = append(m.calls, commandCall{WorkDir: workDir, Name: name, Args: args})
+	m.mu.Unlock()
 	return m.stdout, m.stderr, m.err
 }
 

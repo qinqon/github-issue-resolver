@@ -27,6 +27,7 @@ type Config struct {
 	WatchPRs          []int    // PR numbers to monitor directly (bypasses issue discovery)
 	Reactions         []string // which reactions to run: "reviews", "ci", "conflicts" (empty = all)
 	CreateFlakyIssues bool     // when true, create issues for unrelated CI failures (opt-in)
+	MaxWorkers        int      // max concurrent Claude invocations (default 1 = sequential)
 
 	// GitHub App authentication (alternative to GITHUB_TOKEN)
 	GitHubAppID             int64

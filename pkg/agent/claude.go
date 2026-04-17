@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
+	"sync"
 )
 
 // CommandRunner executes external commands.
@@ -25,14 +27,59 @@ type StreamingRunner interface {
 type ExecRunner struct {
 	// Env holds additional environment variables to set on commands.
 	Env []string
+	mu  sync.RWMutex
+}
+
+// SetGHToken updates the GH_TOKEN environment variable in the runner's Env slice.
+// Thread-safe for concurrent Claude invocations.
+func (r *ExecRunner) SetGHToken(token string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Remove existing GH_TOKEN if present
+	filtered := r.Env[:0]
+	for _, e := range r.Env {
+		if !strings.HasPrefix(e, "GH_TOKEN=") {
+			filtered = append(filtered, e)
+		}
+	}
+	r.Env = append(filtered, fmt.Sprintf("GH_TOKEN=%s", token))
+}
+
+// BuildClaudeEnv constructs the environment variable slice for Claude CLI.
+// Call this once at startup and set it on ExecRunner.Env.
+func BuildClaudeEnv(cfg Config) []string {
+	env := []string{
+		"CLAUDE_CODE_USE_VERTEX=1",
+		fmt.Sprintf("CLOUD_ML_REGION=%s", cfg.VertexRegion),
+		fmt.Sprintf("ANTHROPIC_VERTEX_PROJECT_ID=%s", cfg.VertexProject),
+	}
+	if cfg.GitHubToken != "" {
+		env = append(env, fmt.Sprintf("GH_TOKEN=%s", cfg.GitHubToken))
+	}
+	if cfg.GitAuthorName != "" {
+		env = append(env,
+			fmt.Sprintf("GIT_AUTHOR_NAME=%s", cfg.GitAuthorName),
+			fmt.Sprintf("GIT_COMMITTER_NAME=%s", cfg.GitAuthorName),
+		)
+	}
+	if cfg.GitAuthorEmail != "" {
+		env = append(env,
+			fmt.Sprintf("GIT_AUTHOR_EMAIL=%s", cfg.GitAuthorEmail),
+			fmt.Sprintf("GIT_COMMITTER_EMAIL=%s", cfg.GitAuthorEmail),
+		)
+	}
+	return env
 }
 
 func (r *ExecRunner) Run(ctx context.Context, workDir string, name string, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
+	r.mu.RLock()
 	if len(r.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), r.Env...)
 	}
+	r.mu.RUnlock()
 
 	stdout, err := cmd.Output()
 	var stderr []byte
@@ -45,9 +92,11 @@ func (r *ExecRunner) Run(ctx context.Context, workDir string, name string, args 
 func (r *ExecRunner) RunStream(ctx context.Context, workDir string, onLine func(line []byte), name string, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
+	r.mu.RLock()
 	if len(r.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), r.Env...)
 	}
+	r.mu.RUnlock()
 
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -163,32 +212,6 @@ func parseStreamResult(stdout []byte) (ClaudeResult, error) {
 // runClaude invokes Claude CLI in headless mode with streaming output and parses the result.
 // If resume is true, --continue is passed to resume the most recent session in workDir.
 func runClaude(ctx context.Context, runner CommandRunner, workDir, prompt string, cfg Config, logger *slog.Logger, resume bool) (ClaudeResult, error) {
-	// Set Vertex env vars by wrapping the runner call with env-setting command
-	if execRunner, ok := runner.(*ExecRunner); ok {
-		execRunner.Env = append(execRunner.Env,
-			"CLAUDE_CODE_USE_VERTEX=1",
-			fmt.Sprintf("CLOUD_ML_REGION=%s", cfg.VertexRegion),
-			fmt.Sprintf("ANTHROPIC_VERTEX_PROJECT_ID=%s", cfg.VertexProject),
-		)
-		if cfg.GitHubToken != "" {
-			execRunner.Env = append(execRunner.Env,
-				fmt.Sprintf("GH_TOKEN=%s", cfg.GitHubToken),
-			)
-		}
-		if cfg.GitAuthorName != "" {
-			execRunner.Env = append(execRunner.Env,
-				fmt.Sprintf("GIT_AUTHOR_NAME=%s", cfg.GitAuthorName),
-				fmt.Sprintf("GIT_COMMITTER_NAME=%s", cfg.GitAuthorName),
-			)
-		}
-		if cfg.GitAuthorEmail != "" {
-			execRunner.Env = append(execRunner.Env,
-				fmt.Sprintf("GIT_AUTHOR_EMAIL=%s", cfg.GitAuthorEmail),
-				fmt.Sprintf("GIT_COMMITTER_EMAIL=%s", cfg.GitAuthorEmail),
-			)
-		}
-	}
-
 	args := []string{"-p", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions"}
 	if resume {
 		args = append(args, "--continue")

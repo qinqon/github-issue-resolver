@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,61 @@ const (
 	// so they can be distinguished from manual comments by the same user.
 	botMarker = "<!-- ai-agent-bot -->"
 )
+
+// runParallel executes a function on each item in parallel with a bounded worker pool.
+// If maxWorkers <= 1 or len(items) <= 1, runs sequentially.
+func runParallel[T any](ctx context.Context, maxWorkers int, items []T, fn func(context.Context, T)) {
+	if maxWorkers <= 1 || len(items) <= 1 {
+		for _, item := range items {
+			fn(ctx, item)
+		}
+		return
+	}
+	workers := maxWorkers
+	if workers > len(items) {
+		workers = len(items)
+	}
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for _, item := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		item := item // capture loop variable
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(ctx, item)
+		}()
+	}
+	wg.Wait()
+}
+
+// Task structs for parallel processing
+type newIssueTask struct {
+	issue        Issue
+	branchName   string
+	worktreePath string
+	work         *IssueWork
+}
+
+type reviewTask struct {
+	work          *IssueWork
+	humanComments []ReviewComment
+	humanReviews  []PRReview
+}
+
+type ciTask struct {
+	work     *IssueWork
+	headSHA  string
+	failures []CheckRun
+	diff     string
+}
+
+type conflictTask struct {
+	work      *IssueWork
+	headSHA   string
+	mergeState string
+}
 
 // Agent holds all dependencies and runs the main processing loop.
 type Agent struct {

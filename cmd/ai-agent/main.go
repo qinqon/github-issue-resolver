@@ -23,6 +23,15 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
+func parseIntEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return def
+}
+
 func parseConfig() (agent.Config, string) {
 	cfg := agent.Config{}
 
@@ -40,6 +49,8 @@ func parseConfig() (agent.Config, string) {
 
 	var reviewers string
 	flag.StringVar(&reviewers, "reviewers", os.Getenv("AI_AGENT_REVIEWERS"), "Comma-separated whitelist of users/bots whose reviews to address (empty = all)")
+
+	flag.IntVar(&cfg.MaxWorkers, "max-workers", parseIntEnv("AI_AGENT_MAX_WORKERS", 1), "Maximum parallel Claude invocations (default 1 = sequential)")
 
 	var watchPRs string
 	flag.StringVar(&watchPRs, "watch-prs", os.Getenv("AI_AGENT_WATCH_PRS"), "Comma-separated PR numbers to monitor directly (bypasses issue discovery)")
@@ -349,6 +360,7 @@ func main() {
 		forkURL = fmt.Sprintf("https://github.com/%s/%s.git", cfg.GitHubUser, cfg.Repo)
 	}
 	runner := &agent.ExecRunner{}
+	runner.Env = agent.BuildClaudeEnv(cfg)
 
 	wtm := agent.NewGitWorktreeManager(runner, cfg.CloneDir, repoURL, forkURL)
 	if cfg.GitAuthorName != "" || cfg.GitAuthorEmail != "" {
