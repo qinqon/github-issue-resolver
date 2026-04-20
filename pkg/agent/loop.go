@@ -806,6 +806,10 @@ func (a *Agent) ProcessConflicts(ctx context.Context) {
 
 	// Parallel phase: Claude invocations for conflict resolution
 	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task conflictTask) {
+		// Get commit count before invoking Claude
+		commitsBefore := a.getPRCommits(ctx, task.work.WorktreePath)
+		commitCountBefore := len(commitsBefore)
+
 		prompt := buildConflictResolutionPrompt(*task.work, a.originDefaultBranch())
 		_, err := runClaude(ctx, a.runner, task.work.WorktreePath, prompt, a.cfg, a.logger, true)
 		if err != nil {
@@ -813,6 +817,26 @@ func (a *Agent) ProcessConflicts(ctx context.Context) {
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 				fmt.Sprintf("Rebase failed on commit %s. Attempted to resolve conflicts automatically but failed. Human intervention needed.\n\n%s", shortSHA(task.headSHA), botMarker))
 			return
+		}
+
+		// Verify that no unexpected new commits were created
+		commitsAfter := a.getPRCommits(ctx, task.work.WorktreePath)
+		commitCountAfter := len(commitsAfter)
+
+		if commitCountAfter > commitCountBefore {
+			a.logger.Warn("conflict resolution created new commits instead of resolving within rebase",
+				"pr", task.work.PRNumber,
+				"before", commitCountBefore,
+				"after", commitCountAfter,
+				"new_commits", commitCountAfter-commitCountBefore)
+
+			// Warn user - the improved prompt should prevent this, but if it happens, request human intervention
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+				fmt.Sprintf("⚠️ Conflict resolution created %d unexpected new commit(s) instead of resolving within the rebase flow.\n\n"+
+					"Expected: %d commits (original structure preserved)\n"+
+					"Got: %d commits (new commits added)\n\n"+
+					"Please review the commit history and manually squash or rebase to preserve the original commit structure.\n\n%s",
+					commitCountAfter-commitCountBefore, commitCountBefore, commitCountAfter, botMarker))
 		}
 
 		// Push the rebased branch
@@ -1161,6 +1185,48 @@ func (a *Agent) gitAutosquashRebase(ctx context.Context, worktreePath string) er
 	if err != nil {
 		return fmt.Errorf("git rebase --autosquash: %w (stderr: %s)", err, string(stderr))
 	}
+	return nil
+}
+
+// gitAutosquashNewCommits squashes unexpected new commits created during conflict resolution.
+// This is a fallback for when Claude creates new commits instead of resolving conflicts within the rebase.
+func (a *Agent) gitAutosquashNewCommits(ctx context.Context, worktreePath string, originalCommitCount int) error {
+	commits := a.getPRCommits(ctx, worktreePath)
+	if len(commits) <= originalCommitCount {
+		return nil // Nothing to squash
+	}
+
+	numNewCommits := len(commits) - originalCommitCount
+
+	// Use git rebase -i to squash the extra commits into the last original commit
+	// Create a script that picks the original commits and squashes the new ones
+	script := ""
+	for i := len(commits) - 1; i >= 0; i-- {
+		if i >= originalCommitCount {
+			// New commit - squash it
+			script += fmt.Sprintf("squash %s\n", commits[i].SHA)
+		} else {
+			// Original commit - pick it
+			script += fmt.Sprintf("pick %s\n", commits[i].SHA)
+		}
+	}
+
+	// Write the script to a temporary file
+	scriptPath := filepath.Join(worktreePath, ".git", "rebase-script")
+	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+		return fmt.Errorf("writing rebase script: %w", err)
+	}
+	defer os.Remove(scriptPath)
+
+	// Run interactive rebase with our script
+	_, stderr, err := a.runner.Run(ctx, worktreePath, "sh", "-c",
+		fmt.Sprintf("GIT_SEQUENCE_EDITOR='cp %s' git rebase -i %s", scriptPath, a.originDefaultBranch()))
+	if err != nil {
+		// If rebase fails, abort it
+		a.runner.Run(ctx, worktreePath, "git", "rebase", "--abort")
+		return fmt.Errorf("git rebase -i to squash %d new commits: %w (stderr: %s)", numNewCommits, err, string(stderr))
+	}
+
 	return nil
 }
 
