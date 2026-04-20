@@ -54,7 +54,7 @@ func parseConfig() (agent.Config, string) {
 	flag.StringVar(&watchPRs, "watch-prs", os.Getenv("AI_AGENT_WATCH_PRS"), "Comma-separated PR numbers to monitor directly (bypasses issue discovery)")
 
 	var reactions string
-	flag.StringVar(&reactions, "reactions", os.Getenv("AI_AGENT_REACTIONS"), "Comma-separated list of reactions to run: reviews, ci, conflicts (empty = all)")
+	flag.StringVar(&reactions, "reactions", os.Getenv("AI_AGENT_REACTIONS"), "Comma-separated list of reactions to run: reviews, ci, conflicts, rebase (empty = all)")
 
 	var logFile string
 	flag.StringVar(&logFile, "log-file", os.Getenv("AI_AGENT_LOG_FILE"), "Log file path (default: stderr)")
@@ -159,14 +159,14 @@ func parseConfig() (agent.Config, string) {
 	}
 
 	if reactions != "" {
-		validReactions := map[string]bool{"reviews": true, "ci": true, "conflicts": true}
+		validReactions := map[string]bool{"reviews": true, "ci": true, "conflicts": true, "rebase": true}
 		for _, r := range strings.Split(reactions, ",") {
 			r = strings.TrimSpace(r)
 			if r == "" {
 				continue
 			}
 			if !validReactions[r] {
-				fmt.Fprintf(os.Stderr, "invalid reaction type %q: valid values are reviews, ci, conflicts\n", r)
+				fmt.Fprintf(os.Stderr, "invalid reaction type %q: valid values are reviews, ci, conflicts, rebase\n", r)
 				os.Exit(1)
 			}
 			cfg.Reactions = append(cfg.Reactions, r)
@@ -448,6 +448,9 @@ func runLoop(ctx context.Context, a *agent.Agent, logger *slog.Logger) {
 	}
 	if a.ShouldRunReaction("conflicts") {
 		a.ProcessConflicts(ctx)
+	}
+	if a.ShouldRunReaction("rebase") {
+		a.ProcessRebase(ctx)
 	}
 	if a.ShouldRunReaction("ci") {
 		a.ProcessCIFailures(ctx)
