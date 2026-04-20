@@ -723,7 +723,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 const maxConflictFixAttempts = 2
 
-// ProcessConflicts checks for merge conflicts and tries to rebase/resolve them.
+// ProcessConflicts checks for merge conflicts (dirty mergeable_state) and tries to resolve them.
+// For simple rebases when a PR is just behind the base branch, use ProcessRebase instead.
 func (a *Agent) ProcessConflicts(ctx context.Context) {
 	// Sequential phase: GitHub API calls, worktree setup, git fetch, automatic rebase attempts
 	var tasks []conflictTask
@@ -741,19 +742,8 @@ func (a *Agent) ProcessConflicts(ctx context.Context) {
 
 		a.logger.Debug("PR mergeable state", "pr", work.PRNumber, "state", mergeState)
 
-		needsRebase := mergeState == "dirty" || mergeState == "behind"
-
-		// When mergeable_state is something else (e.g. "unstable"), it may mask
-		// the branch being behind. Use the compare API as a fallback.
-		if !needsRebase {
-			behind, err := a.gh.IsPRBehind(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
-			if err != nil {
-				a.logger.Warn("failed to check if PR is behind", "pr", work.PRNumber, "error", err)
-			}
-			needsRebase = behind
-		}
-
-		if !needsRebase {
+		// Only handle actual merge conflicts
+		if mergeState != "dirty" {
 			continue
 		}
 
@@ -851,6 +841,75 @@ func (a *Agent) ProcessConflicts(ctx context.Context) {
 	})
 }
 
+// ProcessRebase rebases PRs that are behind the base branch but have no merge conflicts.
+// For PRs with actual merge conflicts (dirty state), use ProcessConflicts instead.
+func (a *Agent) ProcessRebase(ctx context.Context) {
+	for _, work := range a.state.ActiveIssues {
+		if work.PRNumber == 0 || work.Status != "pr-open" {
+			continue
+		}
+
+		mergeState, err := a.gh.GetPRMergeable(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+		if err != nil {
+			a.logger.Error("failed to get PR mergeable state", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		a.logger.Debug("PR mergeable state", "pr", work.PRNumber, "state", mergeState)
+
+		needsRebase := mergeState == "behind"
+
+		// When mergeable_state is something else (e.g. "unstable", "blocked"), it may mask
+		// the branch being behind. Use the compare API as a fallback.
+		if !needsRebase && mergeState != "dirty" {
+			behind, err := a.gh.IsPRBehind(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+			if err != nil {
+				a.logger.Warn("failed to check if PR is behind", "pr", work.PRNumber, "error", err)
+			}
+			needsRebase = behind
+		}
+
+		if !needsRebase {
+			continue
+		}
+
+		headSHA, _ := a.gh.GetPRHeadSHA(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+		if headSHA != "" && a.hasExistingBotComment(ctx, work.PRNumber, "rebase") && a.hasExistingBotComment(ctx, work.PRNumber, shortSHA(headSHA)) {
+			continue
+		}
+
+		a.logger.Info("PR is behind base branch, rebasing", "pr", work.PRNumber, "mergeable_state", mergeState)
+
+		if err := a.ensureWorktreeReady(ctx, work); err != nil {
+			a.logger.Error("failed to prepare worktree", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		a.runner.Run(ctx, work.WorktreePath, "git", "fetch", "--all")
+
+		_, stderr, rebaseErr := a.runner.Run(ctx, work.WorktreePath, "git", "rebase", a.originDefaultBranch())
+		if rebaseErr != nil {
+			// Rebase should not fail since there are no conflicts — abort and log
+			a.runner.Run(ctx, work.WorktreePath, "git", "rebase", "--abort")
+			a.logger.Error("rebase failed unexpectedly (no conflicts expected)", "pr", work.PRNumber, "stderr", string(stderr))
+			continue
+		}
+
+		pushRemote := "origin"
+		if wtm, ok := a.worktrees.(*GitWorktreeManager); ok {
+			pushRemote = wtm.PushRemote()
+		}
+		_, stderr, pushErr := a.runner.Run(ctx, work.WorktreePath, "git", "push", pushRemote, "--force-with-lease")
+		if pushErr != nil {
+			a.logger.Error("failed to push after rebase", "pr", work.PRNumber, "error", pushErr, "stderr", string(stderr))
+		} else {
+			a.logger.Info("rebased and pushed successfully", "pr", work.PRNumber)
+			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+				fmt.Sprintf("Rebased commit %s on main and pushed.\n\n%s", shortSHA(headSHA), botMarker))
+		}
+	}
+}
+
 // CleanupDone removes worktrees for merged or closed PRs.
 func (a *Agent) CleanupDone(ctx context.Context) {
 	for issueNum, work := range a.state.ActiveIssues {
@@ -885,7 +944,7 @@ func (a *Agent) HasWatchedPRs() bool {
 
 // ShouldRunReaction returns true if the given reaction type should be executed.
 // If cfg.Reactions is empty, all reactions are enabled.
-// Valid reaction names: "reviews", "ci", "conflicts".
+// Valid reaction names: "reviews", "ci", "conflicts", "rebase".
 func (a *Agent) ShouldRunReaction(reaction string) bool {
 	if len(a.cfg.Reactions) == 0 {
 		return true

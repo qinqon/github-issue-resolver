@@ -972,7 +972,7 @@ func TestBootstrapWatchedPRs_SkipsAlreadyTracked(t *testing.T) {
 	}
 }
 
-func TestProcessConflicts_RebasesWhenBehind(t *testing.T) {
+func TestProcessConflicts_SkipsWhenBehind(t *testing.T) {
 	gh := &mockGitHubClient{
 		mergeableState: "behind",
 	}
@@ -989,6 +989,36 @@ func TestProcessConflicts_RebasesWhenBehind(t *testing.T) {
 	}
 
 	agent.ProcessConflicts(context.Background())
+
+	// ProcessConflicts should NOT rebase when state is "behind" (no conflicts)
+	var rebaseCalls int
+	for _, c := range runner.calls {
+		if c.Name == "git" && len(c.Args) > 0 && c.Args[0] == "rebase" {
+			rebaseCalls++
+		}
+	}
+	if rebaseCalls != 0 {
+		t.Error("ProcessConflicts should not rebase when state is behind (use ProcessRebase instead)")
+	}
+}
+
+func TestProcessRebase_RebasesWhenBehind(t *testing.T) {
+	gh := &mockGitHubClient{
+		mergeableState: "behind",
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessRebase(context.Background())
 
 	// Should have attempted a rebase (git fetch + git rebase)
 	var fetchCalls, rebaseCalls int
@@ -1008,7 +1038,7 @@ func TestProcessConflicts_RebasesWhenBehind(t *testing.T) {
 	}
 }
 
-func TestProcessConflicts_RebasesWhenUnstableButBehind(t *testing.T) {
+func TestProcessRebase_RebasesWhenUnstableButBehind(t *testing.T) {
 	gh := &mockGitHubClient{
 		mergeableState: "unstable",
 		prBehind:       true,
@@ -1025,7 +1055,7 @@ func TestProcessConflicts_RebasesWhenUnstableButBehind(t *testing.T) {
 		WorktreePath: "/tmp/worktree",
 	}
 
-	agent.ProcessConflicts(context.Background())
+	agent.ProcessRebase(context.Background())
 
 	var rebaseCalls int
 	for _, c := range runner.calls {
@@ -1060,6 +1090,58 @@ func TestProcessConflicts_SkipsUnstableNotBehind(t *testing.T) {
 	for _, c := range runner.calls {
 		if c.Name == "git" {
 			t.Errorf("should not run git commands for unstable+not-behind PR, got: git %v", c.Args)
+		}
+	}
+}
+
+func TestProcessRebase_SkipsUnstableNotBehind(t *testing.T) {
+	gh := &mockGitHubClient{
+		mergeableState: "unstable",
+		prBehind:       false,
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessRebase(context.Background())
+
+	for _, c := range runner.calls {
+		if c.Name == "git" {
+			t.Errorf("should not run git commands for unstable+not-behind PR, got: git %v", c.Args)
+		}
+	}
+}
+
+func TestProcessRebase_SkipsDirty(t *testing.T) {
+	gh := &mockGitHubClient{
+		mergeableState: "dirty",
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessRebase(context.Background())
+
+	// ProcessRebase should NOT handle dirty state (that's for ProcessConflicts)
+	for _, c := range runner.calls {
+		if c.Name == "git" {
+			t.Errorf("ProcessRebase should not run git commands for dirty PR, got: git %v", c.Args)
 		}
 	}
 }
