@@ -8,7 +8,7 @@ Each subdirectory is a self-contained workflow selectable in the Ambient GUI.
 | Workflow | Description | Key Flags |
 |----------|-------------|-----------|
 | `issue-resolver` | Watches for labeled issues, implements fixes, creates PRs | `--label` |
-| `pr-babysitter` | Monitors specific PRs: reviews + CI + conflicts | `--watch-prs` |
+| `pr-babysitter` | Monitors specific PRs: CI + conflicts + rebase (no reviews) | `--watch-prs`, `--reactions ci,conflicts,rebase` |
 | `ci-fixer` | Monitors specific PRs: CI failures only | `--watch-prs`, `--reactions ci` |
 | `review-responder` | Monitors specific PRs: review comments only | `--watch-prs`, `--reactions reviews` |
 
