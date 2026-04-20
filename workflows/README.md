@@ -12,6 +12,13 @@ Each subdirectory is a self-contained workflow selectable in the Ambient GUI.
 | `ci-fixer` | Monitors specific PRs: CI failures only | `--watch-prs`, `--reactions ci` |
 | `review-responder` | Monitors specific PRs: review comments only | `--watch-prs`, `--reactions reviews` |
 
+## Prerequisites
+
+The following tools must be installed and available in PATH on the runner:
+
+- `claude` (Claude Code CLI)
+- `gh` (GitHub CLI)
+
 ## Required Session Configuration
 
 All workflows require these environment variables in the Ambient session:
