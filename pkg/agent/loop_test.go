@@ -901,6 +901,42 @@ func TestProcessCIFailures_SkipsAlreadyReportedAfterRestart(t *testing.T) {
 	}
 }
 
+func TestProcessCIFailures_DeduplicatesAcrossSHAChanges(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"def5678"}, // Current HEAD is def5678
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "test", Status: "completed", Conclusion: "failure", Output: "tests failed"},
+		},
+		issueComments: []ReviewComment{
+			// Comment already exists for def5678 from a previous run
+			{ID: 1, User: "bot", Body: fmt.Sprintf("CI check failed on commit def5678 but appears unrelated to this PR's changes.\n\nFlaky test\n\n%s", botMarker)},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:      42,
+		PRNumber:         100,
+		BranchName:       "ai/issue-42",
+		Status:           "pr-open",
+		WorktreePath:     "/tmp/worktree",
+		LastCheckedCISHA: "abc1234", // State says we checked abc1234, but current HEAD is def5678
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Should skip because comment exists for def5678, even though LastCheckedCISHA is abc1234
+	if countClaudeCalls(runner.calls) != 0 {
+		t.Errorf("expected 0 claude calls (comment exists for current SHA), got %d", countClaudeCalls(runner.calls))
+	}
+	// State should be updated to reflect current SHA
+	if agent.state.ActiveIssues[42].LastCheckedCISHA != "def5678" {
+		t.Errorf("expected LastCheckedCISHA to be updated to def5678, got %q", agent.state.ActiveIssues[42].LastCheckedCISHA)
+	}
+}
+
 func countClaudeCalls(calls []commandCall) int {
 	count := 0
 	for _, c := range calls {

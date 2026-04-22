@@ -489,6 +489,15 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				work.CIFixAttempts = 0
 				work.LastCIStatus = ""
 			}
+			// Clean up reported unrelated checks for the old SHA
+			if work.ReportedUnrelatedChecks != nil {
+				oldSHAPrefix := work.LastCheckedCISHA + ":"
+				for key := range work.ReportedUnrelatedChecks {
+					if strings.HasPrefix(key, oldSHAPrefix) {
+						delete(work.ReportedUnrelatedChecks, key)
+					}
+				}
+			}
 		}
 
 		if work.CIFixAttempts >= maxCIFixAttempts {
@@ -509,8 +518,8 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		}
 
 		// Fallback: check if we already investigated this SHA by looking for a bot comment
-		// (handles state recovery after restarts)
-		if work.LastCheckedCISHA == "" && a.alreadyCheckedCI(ctx, work.PRNumber, headSHA) {
+		// (handles state recovery after restarts OR when SHA changed but comments exist)
+		if work.LastCheckedCISHA != headSHA && a.alreadyCheckedCI(ctx, work.PRNumber, headSHA) {
 			work.LastCheckedCISHA = headSHA
 			a.logger.Info("CI already investigated for this SHA (found existing comment), skipping", "pr", work.PRNumber, "sha", shortSHA(headSHA))
 			continue
@@ -587,15 +596,42 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Info("CI failure is unrelated to PR changes", "pr", task.work.PRNumber)
 			explanation := strings.TrimPrefix(cleaned, "UNRELATED")
 			explanation = strings.TrimSpace(explanation)
-			comment := fmt.Sprintf("CI check failed on commit %s but appears unrelated to this PR's changes.\n\n%s\n\n%s", shortSHA(task.headSHA), explanation, botMarker)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
-				a.logger.Error("failed to post CI unrelated comment", "pr", task.work.PRNumber, "error", err)
+
+			// Initialize the map if needed
+			if task.work.ReportedUnrelatedChecks == nil {
+				task.work.ReportedUnrelatedChecks = make(map[string]bool)
 			}
+
+			// Check which failures have not been reported yet for this SHA
+			var unreportedFailures []CheckRun
+			for _, f := range task.failures {
+				key := fmt.Sprintf("%s:%s", task.headSHA, f.Name)
+				if !task.work.ReportedUnrelatedChecks[key] {
+					unreportedFailures = append(unreportedFailures, f)
+				}
+			}
+
+			// Only post a comment if there are new unreported failures
+			if len(unreportedFailures) > 0 {
+				comment := fmt.Sprintf("CI check failed on commit %s but appears unrelated to this PR's changes.\n\n%s\n\n%s", shortSHA(task.headSHA), explanation, botMarker)
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
+					a.logger.Error("failed to post CI unrelated comment", "pr", task.work.PRNumber, "error", err)
+				} else {
+					// Mark these failures as reported
+					for _, f := range unreportedFailures {
+						key := fmt.Sprintf("%s:%s", task.headSHA, f.Name)
+						task.work.ReportedUnrelatedChecks[key] = true
+					}
+				}
+			} else {
+				a.logger.Info("skipping duplicate unrelated CI comment", "pr", task.work.PRNumber, "sha", shortSHA(task.headSHA), "checks", len(task.failures))
+			}
+
 			task.work.LastCIStatus = "unrelated-failure"
 			task.work.LastCheckedCISHA = task.headSHA
 
-			// Create a flaky CI issue if configured
-			if a.cfg.CreateFlakyIssues {
+			// Create a flaky CI issue if configured (only for newly reported failures)
+			if a.cfg.CreateFlakyIssues && len(unreportedFailures) > 0 {
 				issueTitle := fmt.Sprintf("Flaky CI: %s", task.failures[0].Name)
 
 				// Search for existing open issues with the same check name
