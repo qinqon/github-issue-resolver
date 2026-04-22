@@ -242,7 +242,10 @@ func (g *GoGitHubClient) AddPRCommentReaction(ctx context.Context, owner, repo s
 }
 
 func (g *GoGitHubClient) GetCheckRuns(ctx context.Context, owner, repo, ref string) ([]CheckRun, error) {
-	result, _, err := g.client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, nil)
+	opts := &github.ListCheckRunsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
+	}
+	result, _, err := g.client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, opts)
 	if err != nil {
 		return nil, fmt.Errorf("listing check runs: %w", err)
 	}
