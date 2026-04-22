@@ -35,4 +35,10 @@ type Config struct {
 	GitHubAppID             int64
 	GitHubAppPrivateKey     []byte
 	GitHubAppInstallationID int64
+
+	// Gemini code reviewer settings
+	GeminiReviewer       bool     // enable Gemini PR reviews
+	GeminiModel          string   // model to use (default: "gemini-2.0-flash-exp")
+	GeminiReviewOn       []string // triggers: "new-pr", "push" (empty = ["new-pr", "push"])
+	GeminiReviewSeverity string   // minimum severity to comment: "info", "warning", "error" (default: "warning")
 }

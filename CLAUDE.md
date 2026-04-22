@@ -16,6 +16,7 @@ This project uses spec-driven development. **Read the relevant spec before imple
 | [specs/prompts.md](specs/prompts.md) | `pkg/agent/prompt.go` + `pkg/agent/prompt_test.go` |
 | [specs/loop.md](specs/loop.md) | `pkg/agent/loop.go` + `pkg/agent/loop_test.go` |
 | [specs/config.md](specs/config.md) | `cmd/oompa/main.go` (config parsing) + `pkg/agent/config.go` (Config struct) |
+| [specs/gemini-reviewer.md](specs/gemini-reviewer.md) | `pkg/agent/gemini.go` + `pkg/agent/gemini_test.go` |
 | [specs/error-handling.md](specs/error-handling.md) | Error handling and safety constraints |
 | [specs/testing.md](specs/testing.md) | Mock types, test strategy, verification |
 

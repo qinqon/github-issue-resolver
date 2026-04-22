@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -41,6 +42,8 @@ type GitHubClient interface {
 	ListWorkflowRuns(ctx context.Context, owner, repo, workflowID string, status string, limit int) ([]WorkflowRun, error)
 	ListWorkflowJobs(ctx context.Context, owner, repo string, runID int64) ([]WorkflowJob, error)
 	GetWorkflowJobLogs(ctx context.Context, owner, repo string, jobID int64) (string, error)
+	GetPRDiff(ctx context.Context, owner, repo string, prNumber int) (string, error)
+	CreateReview(ctx context.Context, owner, repo string, prNumber int, body string, event string, comments []ReviewComment) error
 }
 
 // GoGitHubClient implements GitHubClient using go-github.
@@ -591,4 +594,49 @@ func (g *GoGitHubClient) GetWorkflowJobLogs(ctx context.Context, owner, repo str
 	}
 
 	return string(body), nil
+}
+
+// GetPRDiff fetches the unified diff for a pull request.
+func (g *GoGitHubClient) GetPRDiff(ctx context.Context, owner, repo string, prNumber int) (string, error) {
+	req, err := g.client.NewRequest("GET", fmt.Sprintf("repos/%s/%s/pulls/%d", owner, repo, prNumber), nil)
+	if err != nil {
+		return "", fmt.Errorf("creating diff request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github.v3.diff")
+
+	var buf bytes.Buffer
+	_, err = g.client.Do(ctx, req, &buf)
+	if err != nil {
+		return "", fmt.Errorf("fetching PR diff: %w", err)
+	}
+
+	return buf.String(), nil
+}
+
+// CreateReview creates a pull request review with inline comments and an overall summary.
+// event should be "COMMENT", "APPROVE", or "REQUEST_CHANGES".
+func (g *GoGitHubClient) CreateReview(ctx context.Context, owner, repo string, prNumber int, body string, event string, comments []ReviewComment) error {
+	var ghComments []*github.DraftReviewComment
+	for _, c := range comments {
+		comment := &github.DraftReviewComment{
+			Path: github.Ptr(c.Path),
+			Body: github.Ptr(c.Body),
+		}
+		if c.Line > 0 {
+			comment.Line = github.Ptr(c.Line)
+		}
+		ghComments = append(ghComments, comment)
+	}
+
+	review := &github.PullRequestReviewRequest{
+		Body:     github.Ptr(body),
+		Event:    github.Ptr(event),
+		Comments: ghComments,
+	}
+
+	_, _, err := g.client.PullRequests.CreateReview(ctx, owner, repo, prNumber, review)
+	if err != nil {
+		return fmt.Errorf("creating PR review: %w", err)
+	}
+	return nil
 }

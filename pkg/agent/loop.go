@@ -26,12 +26,18 @@ type Agent struct {
 	cfg       Config
 	logger    *slog.Logger
 	tokenFunc func(context.Context) (string, error) // optional: provides fresh GitHub tokens (for App auth)
+	gemini    GeminiClient                           // optional: Gemini code reviewer
 }
 
 // SetTokenFunc sets a function that provides fresh GitHub tokens.
 // Used with GitHub App authentication where installation tokens expire after ~1 hour.
 func (a *Agent) SetTokenFunc(fn func(context.Context) (string, error)) {
 	a.tokenFunc = fn
+}
+
+// SetGeminiClient sets the Gemini code reviewer client.
+func (a *Agent) SetGeminiClient(gemini GeminiClient) {
+	a.gemini = gemini
 }
 
 // RefreshToken updates the GitHub token if a token function is set.
@@ -1422,4 +1428,154 @@ func (a *Agent) isAllowedReviewer(user string) bool {
 		}
 	}
 	return false
+}
+
+// ProcessGeminiReviews runs Gemini code review on PRs that have new commits.
+func (a *Agent) ProcessGeminiReviews(ctx context.Context) {
+	if !a.cfg.GeminiReviewer || a.gemini == nil {
+		return
+	}
+
+	for _, work := range a.state.ActiveIssues {
+		if work.PRNumber == 0 {
+			continue
+		}
+
+		// Get current PR head SHA
+		headSHA, err := a.gh.GetPRHeadSHA(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+		if err != nil {
+			a.logger.Warn("failed to get PR head SHA for Gemini review", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		// Skip if already reviewed this commit
+		if work.LastGeminiReviewSHA == headSHA {
+			a.logger.Debug("skipping Gemini review, already reviewed", "pr", work.PRNumber, "sha", headSHA)
+			continue
+		}
+
+		// Check if we should trigger review based on configuration
+		isNewPR := work.LastGeminiReviewSHA == ""
+		isPush := work.LastGeminiReviewSHA != "" && work.LastGeminiReviewSHA != headSHA
+
+		shouldReview := false
+		if len(a.cfg.GeminiReviewOn) == 0 {
+			// Default: review on both new-pr and push
+			shouldReview = true
+		} else {
+			for _, trigger := range a.cfg.GeminiReviewOn {
+				if (trigger == "new-pr" && isNewPR) || (trigger == "push" && isPush) {
+					shouldReview = true
+					break
+				}
+			}
+		}
+
+		if !shouldReview {
+			a.logger.Debug("skipping Gemini review, trigger not matched", "pr", work.PRNumber)
+			continue
+		}
+
+		a.logger.Info("running Gemini review", "pr", work.PRNumber, "sha", headSHA)
+
+		// Get PR diff
+		diff, err := a.gh.GetPRDiff(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber)
+		if err != nil {
+			a.logger.Warn("failed to get PR diff for Gemini review", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		if diff == "" {
+			a.logger.Debug("empty diff, skipping Gemini review", "pr", work.PRNumber)
+			work.LastGeminiReviewSHA = headSHA
+			continue
+		}
+
+		// Run Gemini review
+		suggestions, err := a.gemini.ReviewPRDiff(ctx, diff, DefaultGeminiReviewPrompt)
+		if err != nil {
+			a.logger.Warn("Gemini review failed", "pr", work.PRNumber, "error", err)
+			continue
+		}
+
+		// Filter by severity threshold
+		minSeverity := a.cfg.GeminiReviewSeverity
+		if minSeverity == "" {
+			minSeverity = "warning"
+		}
+
+		var filteredSuggestions []ReviewSuggestion
+		for _, s := range suggestions {
+			if a.shouldIncludeSuggestion(s.Severity, minSeverity) {
+				filteredSuggestions = append(filteredSuggestions, s)
+			}
+		}
+
+		a.logger.Info("Gemini review complete", "pr", work.PRNumber, "suggestions", len(filteredSuggestions), "total", len(suggestions))
+
+		// Post review if there are suggestions
+		if len(filteredSuggestions) > 0 {
+			// Convert suggestions to review comments
+			var comments []ReviewComment
+			for _, s := range filteredSuggestions {
+				emoji := a.severityEmoji(s.Severity)
+				body := fmt.Sprintf("%s %s\n\n%s", emoji, strings.ToUpper(s.Severity), s.Message)
+				body = fmt.Sprintf("%s\n\n<!-- oompa-gemini -->", body)
+
+				comments = append(comments, ReviewComment{
+					Path: s.FilePath,
+					Line: s.Line,
+					Body: body,
+				})
+			}
+
+			// Post review
+			reviewBody := fmt.Sprintf("🤖 **Gemini Review** (model: %s)\n\nFound %d issue(s) in this PR.", a.cfg.GeminiModel, len(filteredSuggestions))
+			err = a.gh.CreateReview(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber, reviewBody, "COMMENT", comments)
+			if err != nil {
+				a.logger.Warn("failed to post Gemini review", "pr", work.PRNumber, "error", err)
+				continue
+			}
+
+			a.logger.Info("posted Gemini review", "pr", work.PRNumber, "comments", len(comments))
+		}
+
+		// Update state with reviewed SHA
+		work.LastGeminiReviewSHA = headSHA
+	}
+}
+
+// shouldIncludeSuggestion returns true if the suggestion severity meets the configured threshold.
+func (a *Agent) shouldIncludeSuggestion(severity, minSeverity string) bool {
+	severityLevel := map[string]int{
+		"info":    1,
+		"warning": 2,
+		"error":   3,
+	}
+
+	sLevel, ok := severityLevel[severity]
+	if !ok {
+		return false
+	}
+
+	minLevel, ok := severityLevel[minSeverity]
+	if !ok {
+		minLevel = severityLevel["warning"]
+	}
+
+	return sLevel >= minLevel
+}
+
+// severityEmoji returns the emoji for a given severity level.
+func (a *Agent) severityEmoji(severity string) string {
+	switch severity {
+	case "error":
+		return "🔴"
+	case "warning":
+		return "⚠️"
+	case "info":
+		return "💡"
+	default:
+		return "ℹ️"
+	}
 }

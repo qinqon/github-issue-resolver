@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -189,6 +190,18 @@ func (m *mockGitHubClient) ListWorkflowJobs(_ context.Context, _, _ string, _ in
 
 func (m *mockGitHubClient) GetWorkflowJobLogs(_ context.Context, _, _ string, _ int64) (string, error) {
 	return "", nil
+}
+
+func (m *mockGitHubClient) GetPRDiff(_ context.Context, _, _ string, _ int) (string, error) {
+	return "diff --git a/test.go b/test.go\n--- a/test.go\n+++ b/test.go\n@@ -1,1 +1,1 @@\n-old\n+new", nil
+}
+
+func (m *mockGitHubClient) CreateReview(_ context.Context, _, _ string, _ int, body string, _ string, comments []ReviewComment) error {
+	m.addedComments = append(m.addedComments, fmt.Sprintf("review:%s", body))
+	for _, c := range comments {
+		m.addedComments = append(m.addedComments, fmt.Sprintf("review-comment:%s:%d:%s", c.Path, c.Line, c.Body))
+	}
+	return nil
 }
 
 // mockWorktreeManager implements WorktreeManager for testing.
@@ -1410,5 +1423,296 @@ func TestProcessTriageJobs_CreatesIssueWhenFlakyIssuesEnabled(t *testing.T) {
 
 	if len(issue.Labels) != 1 || issue.Labels[0] != "ci-flake" {
 		t.Errorf("expected label 'ci-flake', got %v", issue.Labels)
+	}
+}
+
+func TestProcessGeminiReviews_HappyPath(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			return []ReviewSuggestion{
+				{FilePath: "test.go", Line: 10, Severity: "error", Message: "Potential nil pointer"},
+				{FilePath: "test.go", Line: 20, Severity: "warning", Message: "Missing error check"},
+			}, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber:  1,
+				PRNumber:     100,
+				WorktreePath: "/tmp/test",
+				BranchName:   "ai/issue-1",
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:                "owner",
+		Repo:                 "repo",
+		GeminiReviewer:       true,
+		GeminiModel:          "gemini-2.0-flash-exp",
+		GeminiReviewSeverity: "warning",
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	if state.ActiveIssues[1].LastGeminiReviewSHA != "sha123" {
+		t.Errorf("expected LastGeminiReviewSHA to be sha123, got %s", state.ActiveIssues[1].LastGeminiReviewSHA)
+	}
+
+	if len(gh.addedComments) != 3 { // 1 review body + 2 review comments
+		t.Errorf("expected 3 comments (1 review + 2 inline), got %d: %v", len(gh.addedComments), gh.addedComments)
+	}
+
+	// Check that review was posted
+	foundReview := false
+	for _, comment := range gh.addedComments {
+		if strings.Contains(comment, "review:") && strings.Contains(comment, "Gemini Review") {
+			foundReview = true
+			break
+		}
+	}
+	if !foundReview {
+		t.Errorf("expected review comment with 'Gemini Review', got: %v", gh.addedComments)
+	}
+}
+
+func TestProcessGeminiReviews_SkipsAlreadyReviewed(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			t.Errorf("Gemini should not be called for already-reviewed SHA")
+			return nil, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber:         1,
+				PRNumber:            100,
+				LastGeminiReviewSHA: "sha123", // Already reviewed
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		GeminiReviewer: true,
+		GeminiModel:    "gemini-2.0-flash-exp",
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	if len(gh.addedComments) != 0 {
+		t.Errorf("expected no comments, got %d", len(gh.addedComments))
+	}
+}
+
+func TestProcessGeminiReviews_FiltersSeverity(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			return []ReviewSuggestion{
+				{FilePath: "test.go", Line: 10, Severity: "error", Message: "Error msg"},
+				{FilePath: "test.go", Line: 20, Severity: "warning", Message: "Warning msg"},
+				{FilePath: "test.go", Line: 30, Severity: "info", Message: "Info msg"},
+			}, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber: 1,
+				PRNumber:    100,
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:                "owner",
+		Repo:                 "repo",
+		GeminiReviewer:       true,
+		GeminiModel:          "gemini-2.0-flash-exp",
+		GeminiReviewSeverity: "error", // Only errors
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	// Should only post 1 error comment (not warning or info)
+	reviewComments := 0
+	for _, comment := range gh.addedComments {
+		if strings.Contains(comment, "review-comment:") {
+			reviewComments++
+		}
+	}
+
+	if reviewComments != 1 {
+		t.Errorf("expected 1 review comment (error only), got %d", reviewComments)
+	}
+}
+
+func TestProcessGeminiReviews_Disabled(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			t.Errorf("Gemini should not be called when disabled")
+			return nil, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber: 1,
+				PRNumber:    100,
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		GeminiReviewer: false, // Disabled
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	if len(gh.addedComments) != 0 {
+		t.Errorf("expected no comments when disabled, got %d", len(gh.addedComments))
+	}
+}
+
+func TestProcessGeminiReviews_NewPROnly(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	called := false
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			called = true
+			return []ReviewSuggestion{}, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber:         1,
+				PRNumber:            100,
+				LastGeminiReviewSHA: "old-sha", // Not a new PR
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:           "owner",
+		Repo:            "repo",
+		GeminiReviewer:  true,
+		GeminiReviewOn:  []string{"new-pr"}, // Only on new PR
+		GeminiModel:     "gemini-2.0-flash-exp",
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	if called {
+		t.Errorf("Gemini should not be called for push when configured for new-pr only")
+	}
+}
+
+func TestProcessGeminiReviews_PushOnly(t *testing.T) {
+	gh := &mockGitHubClient{
+		prHeadSHAs: []string{"sha123"},
+	}
+	called := false
+	mockGemini := &MockGeminiClient{
+		ReviewFunc: func(ctx context.Context, diff, prompt string) ([]ReviewSuggestion, error) {
+			called = true
+			return []ReviewSuggestion{}, nil
+		},
+	}
+
+	state := &State{
+		ActiveIssues: map[int]*IssueWork{
+			1: {
+				IssueNumber:         1,
+				PRNumber:            100,
+				LastGeminiReviewSHA: "", // New PR
+			},
+		},
+	}
+
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		GeminiReviewer: true,
+		GeminiReviewOn: []string{"push"}, // Only on push
+		GeminiModel:    "gemini-2.0-flash-exp",
+	}
+
+	a := &Agent{
+		gh:     gh,
+		gemini: mockGemini,
+		state:  state,
+		cfg:    cfg,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	a.ProcessGeminiReviews(context.Background())
+
+	if called {
+		t.Errorf("Gemini should not be called for new PR when configured for push only")
 	}
 }
