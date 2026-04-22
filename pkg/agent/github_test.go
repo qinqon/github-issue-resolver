@@ -505,3 +505,64 @@ func TestSearchIssues_FiltersPullRequests(t *testing.T) {
 		t.Errorf("expected issue 42, got %d", issues[0].Number)
 	}
 }
+
+func TestGetCheckRuns_UsesPerPage100(t *testing.T) {
+	var receivedPerPage int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/commits/abc123/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		// Capture the per_page query parameter
+		if pp := r.URL.Query().Get("per_page"); pp != "" {
+			receivedPerPage = 100 // If per_page is set in URL, it should be 100
+			if pp != "100" {
+				t.Errorf("expected per_page=100, got %q", pp)
+			}
+		}
+
+		result := map[string]any{
+			"total_count": 2,
+			"check_runs": []map[string]any{
+				{
+					"id":         int64(1001),
+					"name":       "test-job",
+					"status":     "completed",
+					"conclusion": "success",
+				},
+				{
+					"id":         int64(1002),
+					"name":       "lint-job",
+					"status":     "completed",
+					"conclusion": "failure",
+					"output": map[string]any{
+						"text":    "Linting errors found",
+						"summary": "3 errors",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(result)
+	})
+
+	gh := setupTestClient(t, mux)
+	runs, err := gh.GetCheckRuns(context.Background(), "owner", "repo", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 check runs, got %d", len(runs))
+	}
+	if runs[0].ID != 1001 {
+		t.Errorf("expected check run ID 1001, got %d", runs[0].ID)
+	}
+	if runs[0].Conclusion != "success" {
+		t.Errorf("expected conclusion 'success', got %q", runs[0].Conclusion)
+	}
+	if runs[1].ID != 1002 {
+		t.Errorf("expected check run ID 1002, got %d", runs[1].ID)
+	}
+	if runs[1].Output != "Linting errors found" {
+		t.Errorf("expected output 'Linting errors found', got %q", runs[1].Output)
+	}
+	if receivedPerPage != 100 {
+		t.Error("expected per_page parameter to be set to 100")
+	}
+}
