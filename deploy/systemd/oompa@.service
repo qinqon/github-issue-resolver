@@ -1,0 +1,37 @@
+[Unit]
+Description=Oompa %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%u
+EnvironmentFile=/etc/oompa/%i.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h
+
+# Download latest binary before starting
+ExecStartPre=/bin/mkdir -p /tmp/oompa-bin
+ExecStartPre=/usr/bin/gh release download --repo qinqon/oompa --pattern oompa-linux-amd64 --dir /tmp/oompa-bin --clobber
+ExecStartPre=/bin/chmod +x /tmp/oompa-bin/oompa-linux-amd64
+
+# Run oompa with auto-restart on new version
+ExecStart=/tmp/oompa-bin/oompa-linux-amd64 --exit-on-new-version=qinqon/oompa ${OOMPA_FLAGS}
+
+# Restart on exit (new version available or transient failure)
+Restart=always
+RestartSec=5
+
+# Timeout settings
+TimeoutStartSec=300
+TimeoutStopSec=30
+
+# Security hardening (optional, uncomment if desired)
+# PrivateTmp=true
+# NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# ReadWritePaths=%h/oompa-work
+
+[Install]
+WantedBy=multi-user.target

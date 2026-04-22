@@ -109,6 +109,30 @@ When using GitHub App auth, the agent pushes branches directly to the upstream r
 
 The agent is stateless on disk. On every startup it rebuilds its state from GitHub by scanning labeled issues and matching PRs, so there is nothing to back up or migrate.
 
+## Deployment
+
+### Long-running service (systemd)
+
+For production deployments on Linux, use the native systemd unit for automatic binary updates, restarts, and proper process supervision:
+
+```bash
+cd deploy/systemd
+./install.sh issue-resolver
+# Edit ~/.config/oompa/issue-resolver.env with your configuration
+systemctl --user start oompa@issue-resolver
+systemctl --user enable oompa@issue-resolver
+```
+
+See [`deploy/systemd/README.md`](deploy/systemd/README.md) for details.
+
+### Wrapper script (legacy)
+
+For Ambient Code platform or quick testing, use the wrapper script:
+
+```bash
+./workflows/run-oompa.sh --owner myorg --repo myrepo
+```
+
 ## Testing
 
 ```bash
