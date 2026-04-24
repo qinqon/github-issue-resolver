@@ -21,11 +21,12 @@ type mockGitHubClient struct {
 	removedLabels   []string
 	addedReactions  []string
 	checkRuns       []CheckRun
-	prHeadSHAs      []string // returns these in sequence; if empty returns "abc123"
-	prsAfterNCalls  int      // only return PRs after this many ListPRsByHead calls
+	checkRunLogs    map[int64]string // maps check run ID to full log content
+	prHeadSHAs      []string         // returns these in sequence; if empty returns "abc123"
+	prsAfterNCalls  int              // only return PRs after this many ListPRsByHead calls
 	prsCallCount    int
-	mergeableState  string  // mergeable state to return from GetPRMergeable (default: "clean")
-	prBehind        bool    // whether IsPRBehind returns true
+	mergeableState  string        // mergeable state to return from GetPRMergeable (default: "clean")
+	prBehind        bool          // whether IsPRBehind returns true
 	createdIssues   []Issue       // tracks issues created via CreateIssue
 	nextIssueNumber int           // next issue number to return (defaults to 1)
 	searchResults   []Issue       // results to return from SearchIssues
@@ -94,7 +95,12 @@ func (m *mockGitHubClient) GetCheckRuns(_ context.Context, _, _, _ string) ([]Ch
 	return m.checkRuns, nil
 }
 
-func (m *mockGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int64) (string, error) {
+func (m *mockGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, checkRunID int64) (string, error) {
+	if m.checkRunLogs != nil {
+		if log, ok := m.checkRunLogs[checkRunID]; ok {
+			return log, nil
+		}
+	}
 	return "", nil
 }
 
@@ -672,6 +678,9 @@ func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
 		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
+		},
 	}
 	runner := &mockCommandRunner{stdout: claudeResult}
 	wt := &mockWorktreeManager{}
@@ -729,6 +738,9 @@ func TestProcessCIFailures_SkipsFlakyIssueWhenDisabled(t *testing.T) {
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
 		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
+		},
 	}
 	runner := &mockCommandRunner{stdout: claudeResult}
 	wt := &mockWorktreeManager{}
@@ -763,6 +775,9 @@ func TestProcessCIFailures_SkipsDuplicateFlakyIssue(t *testing.T) {
 	gh := &mockGitHubClient{
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
 		},
 		searchResults: []Issue{
 			{Number: 50, Title: "Flaky CI: integration-tests", Labels: []string{"flaky-test"}},
@@ -805,6 +820,9 @@ func TestProcessCIFailures_CreatesNewFlakyIssueWhenNoDuplicate(t *testing.T) {
 	gh := &mockGitHubClient{
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
 		},
 		searchResults: []Issue{}, // No existing issues
 	}
@@ -849,6 +867,9 @@ func TestProcessCIFailures_CreatesIssueWhenClaudeSaysNone(t *testing.T) {
 	gh := &mockGitHubClient{
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
 		},
 		searchResults: []Issue{
 			{Number: 50, Title: "Some other flaky test", Labels: []string{"flaky-test"}},
