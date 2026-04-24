@@ -649,14 +649,21 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				}
 
 				// No existing issue matched, create a new one
-				issueBody := fmt.Sprintf("A CI failure was detected that appears unrelated to PR changes.\n\n"+
-					"**Detected in PR**: #%d\n"+
-					"**Commit**: %s\n"+
-					"**Failed check**: %s\n\n"+
-					"**Analysis**:\n%s\n\n"+
-					"**Check output**:\n```\n%s\n```\n\n"+
+				issueBody := fmt.Sprintf("### Which jobs are flaking?\n\n"+
+					"%s\n\n"+
+					"Detected in PR #%d, commit %s.\n\n"+
+					"### Which tests are flaking?\n\n"+
+					"%s\n\n"+
+					"### Since when has it been flaking?\n\n"+
+					"%s\n\n"+
+					"### Reason for failure (if possible)\n\n"+
+					"%s\n\n"+
+					"### Anything else we need to know?\n\n"+
+					"Automatically created by [oompa](https://github.com/qinqon/oompa).\n\n"+
 					"%s",
-					task.work.PRNumber, shortSHA(task.headSHA), task.failures[0].Name, explanation, task.failures[0].Output, botMarker)
+					task.failures[0].Name, task.work.PRNumber, shortSHA(task.headSHA),
+					task.failures[0].Name, time.Now().Format("2006-01-02"), explanation,
+					botMarker)
 				issueNum, err = a.gh.CreateIssue(ctx, a.cfg.Owner, a.cfg.Repo, issueTitle, issueBody, []string{a.cfg.FlakyLabel})
 				if err != nil {
 					a.logger.Error("failed to create flaky CI issue", "error", err)
