@@ -38,14 +38,14 @@ func issueBranchName(issueNumber int) string {
 // classifyPRs finds the first open PR and checks if any PR was merged.
 func classifyPRs(prs []PR) (openPR *PR, hasMerged bool) {
 	for i := range prs {
-		if prs[i].State == "open" {
-			return &prs[i], false
+		if prs[i].State == "open" && openPR == nil {
+			openPR = &prs[i]
 		}
 		if prs[i].Merged {
 			hasMerged = true
 		}
 	}
-	return nil, hasMerged
+	return openPR, hasMerged
 }
 
 // Agent holds all dependencies and runs the main processing loop.
@@ -1462,6 +1462,10 @@ func truncateString(s string, maxLen int) string {
 // markIssueFailed marks an issue as failed, unassigns the agent, and adds the ai-failed label.
 func (a *Agent) markIssueFailed(ctx context.Context, issueNumber int, work *IssueWork) {
 	work.Status = StatusFailed
-	_ = a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issueNumber, a.cfg.GitHubUser)
-	_ = a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issueNumber, labelAIFailed)
+	if err := a.gh.UnassignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issueNumber, a.cfg.GitHubUser); err != nil {
+		a.logger.Warn("failed to unassign issue", "issue", issueNumber, "error", err)
+	}
+	if err := a.gh.AddLabel(ctx, a.cfg.Owner, a.cfg.Repo, issueNumber, labelAIFailed); err != nil {
+		a.logger.Warn("failed to add failure label", "issue", issueNumber, "error", err)
+	}
 }
