@@ -567,13 +567,17 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
-		// Fetch logs for each failing check
+		// Fetch logs for each failing check when output is missing or too short.
+		// Threshold of 50 chars filters out generic GitHub Actions boilerplate
+		// (e.g., "Process completed with exit code 1") that doesn't provide
+		// enough context for meaningful analysis.
 		for i, f := range failures {
-			if f.Output == "" {
+			trimmed := strings.TrimSpace(f.Output)
+			if len(trimmed) < 50 {
 				log, err := a.gh.GetCheckRunLog(ctx, a.cfg.Owner, a.cfg.Repo, f.ID)
 				if err != nil {
 					a.logger.Warn("failed to get check run log", "check", f.Name, "error", err)
-				} else {
+				} else if log != "" {
 					failures[i].Output = log
 				}
 			}
@@ -644,6 +648,18 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 			// Create a flaky CI issue if configured
 			if a.cfg.CreateFlakyIssues {
+				// Skip flaky issue creation if check run output is still too short after
+				// attempting to fetch full logs. Without sufficient output, Claude cannot
+				// meaningfully match against existing issues or describe the root cause.
+				trimmedOutput := strings.TrimSpace(task.failures[0].Output)
+				if len(trimmedOutput) < 50 {
+					a.logger.Warn("skipping flaky issue creation: check run output is empty or too short",
+						"pr", task.work.PRNumber,
+						"check", task.failures[0].Name,
+						"output_length", len(trimmedOutput))
+					return
+				}
+
 				issueTitle := fmt.Sprintf("Flaky CI: %s", task.failures[0].Name)
 
 				// Search for existing open issues with the flaky label
