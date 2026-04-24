@@ -422,6 +422,10 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 
 	// Parallel phase: run Claude, amend/push, post fallback replies
 	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task reviewTask) {
+		// Capture local HEAD before Claude runs so we can detect if Claude committed directly
+		headBefore, _, _ := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
+		headSHABefore := strings.TrimSpace(string(headBefore))
+
 		prompt := buildReviewResponsePrompt(*task.work, task.humanComments, task.humanReviews, a.cfg.Owner, a.cfg.Repo)
 		_, err := runClaude(ctx, a.runner, task.work.WorktreePath, prompt, a.cfg, a.logger, true)
 		if err != nil {
@@ -436,6 +440,18 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 				a.logger.Error("failed to amend commit", "pr", task.work.PRNumber, "error", err)
 			} else if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 				a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
+			}
+		} else {
+			// No uncommitted changes — Claude may have committed or amended directly.
+			// Check if HEAD changed since before Claude ran.
+			headAfter, _, _ := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
+			headSHAAfter := strings.TrimSpace(string(headAfter))
+			if headSHAAfter != headSHABefore {
+				a.logger.Info("Claude committed directly, pushing", "pr", task.work.PRNumber)
+				hasChanges = true
+				if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
+					a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
+				}
 			}
 		}
 
