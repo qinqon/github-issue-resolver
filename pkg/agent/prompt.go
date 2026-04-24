@@ -129,9 +129,12 @@ Instructions:
      Focus ONLY on describing the failure itself: what test failed, what the error was, and why it looks flaky or infrastructure-related.
      The explanation will be used to create a standalone flaky test issue, so it must make sense without any PR context.
 3. If the failure IS directly related to the PR changes:
-   - Your output MUST start with the word RELATED
    - Fix the code so that CI passes
    - Run "make lint" and "make test" locally to verify
+   - CRITICAL: After you are done fixing, your FINAL text output MUST start with the word RELATED
+     followed by a brief summary of what you fixed. This prefix is mandatory — the automation
+     parses it to determine next steps. If you forget to start with RELATED, your entire fix
+     will be discarded.
    `
 
 	signoff := ""
@@ -141,13 +144,17 @@ Instructions:
 
 	if len(commits) > 1 {
 		prompt += `   - IMPORTANT: This PR has multiple commits. You MUST identify which specific commit introduced the breaking change
-   - After fixing the code, create a fixup commit targeting the commit that introduced the issue:
+   - After fixing the code, amend your fix into the commit that introduced the issue:
      git add <fixed-files>
-     git commit --fixup <SHA-of-commit-that-introduced-issue>
-   - Do NOT use "git commit --amend" as that would incorrectly amend the last commit` + signoff + `
+     git commit --amend --no-edit
+   - If the breaking commit is NOT the HEAD commit, use fixup instead:
+     git add <fixed-files>
+     git commit --fixup <SHA-of-commit-that-introduced-issue>` + signoff + `
 `
 	} else {
-		prompt += `   - After fixing the code, stage your changes with "git add" but do NOT commit
+		prompt += `   - After fixing the code, amend your fix into the commit:
+     git add <fixed-files>
+     git commit --amend --no-edit` + signoff + `
 `
 	}
 
