@@ -44,6 +44,9 @@ func classifyPRs(prs []PR) (openPR *PR, hasMerged bool) {
 		if prs[i].Merged {
 			hasMerged = true
 		}
+		if openPR != nil && hasMerged {
+			break
+		}
 	}
 	return openPR, hasMerged
 }
@@ -179,13 +182,11 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			if work.PRNumber == 0 && work.Status == StatusImplementing {
 				prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, work.BranchName)
 				if err == nil {
-					for _, p := range prs {
-						if p.State == "open" {
-							work.PRNumber = p.Number
-							work.Status = StatusPROpen
-							a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
-							break
-						}
+					openPR, _ := classifyPRs(prs)
+					if openPR != nil {
+						work.PRNumber = openPR.Number
+						work.Status = StatusPROpen
+						a.logger.Info("found PR for tracked issue", "issue", issue.Number, "pr", work.PRNumber)
 					}
 				}
 			}
