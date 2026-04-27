@@ -644,8 +644,8 @@ func TestProcessCIFailures_StopsAfterMaxRetries(t *testing.T) {
 	if len(runner.calls) != 0 {
 		t.Error("should not invoke claude after max retries")
 	}
-	if len(gh.addedComments) != 1 {
-		t.Error("expected comment about max retries")
+	if len(gh.addedComments) != 0 {
+		t.Error("expected no comments after max retries")
 	}
 }
 

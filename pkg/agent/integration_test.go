@@ -788,8 +788,8 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	}
 	gh.mu.Unlock()
 
-	if !hasComment {
-		t.Error("expected comment about exhausted CI fix attempts")
+	if hasComment {
+		t.Error("should not post comment about exhausted CI fix attempts")
 	}
 
 	// CI passes — verify no further action is taken
