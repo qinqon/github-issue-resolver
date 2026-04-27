@@ -11,26 +11,27 @@ import (
 
 // mockGitHubClient implements GitHubClient for testing.
 type mockGitHubClient struct {
-	issues          []Issue
-	prComments      []ReviewComment
-	issueComments   []ReviewComment
-	prState         string
-	prs             []PR
-	addedComments   []string
-	addedLabels     []string
-	removedLabels   []string
-	addedReactions  []string
-	checkRuns       []CheckRun
-	checkRunLogs    map[int64]string // maps check run ID to full log content
-	prHeadSHAs      []string         // returns these in sequence; if empty returns "abc123"
-	prsAfterNCalls  int              // only return PRs after this many ListPRsByHead calls
-	prsCallCount    int
-	mergeableState  string        // mergeable state to return from GetPRMergeable (default: "clean")
-	prBehind        bool          // whether IsPRBehind returns true
-	createdIssues   []Issue       // tracks issues created via CreateIssue
-	nextIssueNumber int           // next issue number to return (defaults to 1)
-	searchResults   []Issue       // results to return from SearchIssues
-	workflowRuns    []WorkflowRun // workflow runs to return from ListWorkflowRuns
+	issues           []Issue
+	prComments       []ReviewComment
+	issueComments    []ReviewComment
+	prState          string
+	prs              []PR
+	addedComments    []string
+	addedLabels      []string
+	removedLabels    []string
+	addedReactions   []string
+	checkRuns        []CheckRun
+	commitStatuses   []CheckRun       // commit status failures (returned by GetCommitStatuses)
+	checkRunLogs     map[int64]string  // maps check run ID to full log content
+	prHeadSHAs       []string          // returns these in sequence; if empty returns "abc123"
+	prsAfterNCalls   int               // only return PRs after this many ListPRsByHead calls
+	prsCallCount     int
+	mergeableState   string            // mergeable state to return from GetPRMergeable (default: "clean")
+	prBehind         bool              // whether IsPRBehind returns true
+	createdIssues    []Issue           // tracks issues created via CreateIssue
+	nextIssueNumber  int               // next issue number to return (defaults to 1)
+	searchResults    []Issue           // results to return from SearchIssues
+	workflowRuns     []WorkflowRun     // workflow runs to return from ListWorkflowRuns
 
 	listIssuesErr error
 }
@@ -93,6 +94,10 @@ func (m *mockGitHubClient) AddPRCommentReaction(_ context.Context, _, _ string, 
 
 func (m *mockGitHubClient) GetCheckRuns(_ context.Context, _, _, _ string) ([]CheckRun, error) {
 	return m.checkRuns, nil
+}
+
+func (m *mockGitHubClient) GetCommitStatuses(_ context.Context, _, _, _ string) ([]CheckRun, error) {
+	return m.commitStatuses, nil
 }
 
 func (m *mockGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, checkRunID int64) (string, error) {
@@ -1701,5 +1706,96 @@ func TestProcessTriageJobs_CreatesIssueWhenFlakyIssuesEnabled(t *testing.T) {
 
 	if len(issue.Labels) != 1 || issue.Labels[0] != "ci-flake" {
 		t.Errorf("expected label 'ci-flake', got %v", issue.Labels)
+	}
+}
+
+func TestProcessCIFailures_DetectsCommitStatusFailures(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "RELATED Fixed CI"})
+	gh := &mockGitHubClient{
+		// No check run failures
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "DCO", Status: "completed", Conclusion: "success"},
+		},
+		// Commit status failures (Prow)
+		commitStatuses: []CheckRun{
+			{Name: "pull-kubernetes-nmstate-unit-test", Status: "completed", Conclusion: "failure", Output: "https://prow.ci.kubevirt.io/logs/1234"},
+		},
+		prHeadSHAs: []string{"sha-before", "sha-after"},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	claudeCalls := 0
+	for _, c := range runner.calls {
+		if c.Name == "claude" {
+			claudeCalls++
+		}
+	}
+	if claudeCalls != 1 {
+		t.Fatalf("expected 1 claude call for commit status failure, got %d", claudeCalls)
+	}
+	if agent.state.ActiveIssues[42].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[42].CIFixAttempts)
+	}
+}
+
+func TestProcessCIFailures_MergesCheckRunsAndCommitStatuses(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "RELATED Fixed both failures"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "github-actions-test", Status: "completed", Conclusion: "failure", Output: "test failed"},
+		},
+		commitStatuses: []CheckRun{
+			{Name: "pull-unit-test", Status: "completed", Conclusion: "failure", Output: "https://prow.ci/logs/1234"},
+		},
+		prHeadSHAs: []string{"sha-before", "sha-after"},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Should have invoked Claude with both failures merged into the prompt
+	var claudePrompt string
+	claudeCalls := 0
+	for _, c := range runner.calls {
+		if c.Name == "claude" {
+			claudeCalls++
+			// The prompt is the last positional argument
+			if len(c.Args) > 0 {
+				claudePrompt = c.Args[len(c.Args)-1]
+			}
+		}
+	}
+	if claudeCalls != 1 {
+		t.Fatalf("expected 1 claude call, got %d", claudeCalls)
+	}
+	if !strings.Contains(claudePrompt, "github-actions-test") {
+		t.Errorf("expected prompt to contain check run failure 'github-actions-test', got: %s", truncateString(claudePrompt, 200))
+	}
+	if !strings.Contains(claudePrompt, "pull-unit-test") {
+		t.Errorf("expected prompt to contain commit status failure 'pull-unit-test', got: %s", truncateString(claudePrompt, 200))
 	}
 }

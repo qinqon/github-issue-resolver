@@ -67,13 +67,16 @@ type PRReview struct {
 	SubmittedAt time.Time
 }
 
-// CheckRun represents a GitHub Actions check run.
+// CheckRun represents a GitHub Actions check run or a commit status entry.
+// For check runs: ID is the check-run/job ID, Output contains log text.
+// For commit statuses (e.g. Prow): ID is 0, Output contains the target_url.
+// Callers must check ID != 0 before calling GetCheckRunLog.
 type CheckRun struct {
 	ID         int64
 	Name       string
 	Status     string // queued, in_progress, completed
 	Conclusion string // success, failure, neutral, cancelled, skipped, timed_out, action_required
-	Output     string // summary/text from the check run
+	Output     string // summary/text from the check run, or target_url for commit statuses
 }
 
 // JobRun represents a CI job run (periodic or triggered).

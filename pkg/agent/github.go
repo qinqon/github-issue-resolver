@@ -38,6 +38,7 @@ type GitHubClient interface {
 	IsPRBehind(ctx context.Context, owner, repo string, prNumber int) (bool, error)
 	CreateIssue(ctx context.Context, owner, repo, title, body string, labels []string) (int, error)
 	SearchIssues(ctx context.Context, query string) ([]Issue, error)
+	GetCommitStatuses(ctx context.Context, owner, repo, ref string) ([]CheckRun, error)
 	ListWorkflowRuns(ctx context.Context, owner, repo, workflowID string, status string, limit int) ([]WorkflowRun, error)
 	ListWorkflowJobs(ctx context.Context, owner, repo string, runID int64) ([]WorkflowJob, error)
 	GetWorkflowJobLogs(ctx context.Context, owner, repo string, jobID int64) (string, error)
@@ -266,6 +267,41 @@ func (g *GoGitHubClient) GetCheckRuns(ctx context.Context, owner, repo, ref stri
 			Conclusion: r.GetConclusion(),
 			Output:     output,
 		})
+	}
+	return runs, nil
+}
+
+// GetCommitStatuses queries the Combined Status API and returns failures as
+// CheckRun values. Commit-status entries have ID==0 (no check-run ID exists)
+// and Output contains the status description and target_url (a link to logs,
+// e.g. Prow job page) rather than log text. Callers must not pass ID==0 to
+// GetCheckRunLog.
+func (g *GoGitHubClient) GetCommitStatuses(ctx context.Context, owner, repo, ref string) ([]CheckRun, error) {
+	var runs []CheckRun
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		status, resp, err := g.client.Repositories.GetCombinedStatus(ctx, owner, repo, ref, opts)
+		if err != nil {
+			return nil, fmt.Errorf("getting combined status: %w", err)
+		}
+		for _, s := range status.Statuses {
+			if s.GetState() == "failure" || s.GetState() == "error" {
+				output := s.GetTargetURL()
+				if desc := s.GetDescription(); desc != "" {
+					output = desc + "\n" + output
+				}
+				runs = append(runs, CheckRun{
+					Name:       s.GetContext(),
+					Status:     "completed",
+					Conclusion: "failure",
+					Output:     output,
+				})
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return runs, nil
 }
