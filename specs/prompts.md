@@ -24,7 +24,12 @@ Tells Claude to:
 Tells Claude to:
 - First investigate whether CI failures are directly caused by PR changes
 - If UNRELATED: output starts with "UNRELATED" and an explanation
-- If RELATED: output starts with "RELATED" and Claude fixes the code
+- If RELATED: critically evaluate the fix before applying it:
+  - Verify the failure is actually caused by the PR changes (not a flaky test or infrastructure issue)
+  - If the fix involves changing test expectations, confirm the new behavior is correct rather than just making the test pass
+  - If the failure is in code the PR did not touch, treat it as UNRELATED (see step 2) even if it looks related
+  - Prefer minimal, targeted fixes over broad refactoring
+- Output starts with "RELATED" and Claude fixes the code
 - For multi-commit PRs: create fixup commits targeting the commit that introduced the issue
 - For single-commit PRs: stage changes but do NOT commit (agent amends)
 - Run lint/test to verify the fix
