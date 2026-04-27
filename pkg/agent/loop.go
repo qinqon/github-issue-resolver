@@ -534,8 +534,6 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		if work.CIFixAttempts >= maxCIFixAttempts {
 			if work.LastCIStatus != "max-retries-reached" {
 				a.logger.Warn("CI fix attempts exhausted", "pr", work.PRNumber, "attempts", work.CIFixAttempts)
-				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-					fmt.Sprintf("CI is still failing after %d fix attempts. Human intervention needed.\n\n%s", maxCIFixAttempts, botMarker))
 				work.LastCIStatus = "max-retries-reached"
 			}
 			continue
@@ -1494,10 +1492,6 @@ func (a *Agent) resolveConflictsParallel(ctx context.Context, tasks []conflictTa
 		_, err := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, prompt, a.logger, true)
 		if err != nil {
 			a.logger.Error("agent failed to resolve conflicts", "pr", task.work.PRNumber, "error", err)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("Could not resolve conflicts on commit %s automatically. Human intervention needed.\n\n%s", shortSHA(task.headSHA), botMarker)); err != nil {
-				a.logger.Error("failed to log error to github", "pr", task.work.PRNumber, "error", err)
-			}
 			return
 		}
 
@@ -1525,10 +1519,6 @@ func (a *Agent) resolveConflictsParallel(ctx context.Context, tasks []conflictTa
 		// Push the rebased branch
 		if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 			a.logger.Error("failed to push after conflict resolution", "pr", task.work.PRNumber, "error", err)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("Could not push conflict resolution for commit %s. Human intervention needed.\n\n%s", shortSHA(task.headSHA), botMarker)); err != nil {
-				a.logger.Error("failed to log push error to github", "pr", task.work.PRNumber, "error", err)
-			}
 		} else {
 			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 				fmt.Sprintf("Rebased commit %s on main and pushed (conflicts resolved).\n\n%s", shortSHA(task.headSHA), botMarker)); err != nil {
