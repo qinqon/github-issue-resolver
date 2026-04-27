@@ -190,6 +190,10 @@ func (f *fakeGitHubClient) GetCheckRuns(_ context.Context, _, _, ref string) ([]
 	return append([]CheckRun{}, f.state.checkRuns...), nil
 }
 
+func (f *fakeGitHubClient) GetCommitStatuses(_ context.Context, _, _, _ string) ([]CheckRun, error) {
+	return nil, nil
+}
+
 func (f *fakeGitHubClient) GetCheckRunLog(_ context.Context, _, _ string, _ int64) (string, error) {
 	return "", nil
 }

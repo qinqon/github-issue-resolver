@@ -506,6 +506,96 @@ func TestSearchIssues_FiltersPullRequests(t *testing.T) {
 	}
 }
 
+func TestGetCommitStatuses_ReturnsFailures(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/commits/abc123/status", func(w http.ResponseWriter, r *http.Request) {
+		result := map[string]any{
+			"state": "failure",
+			"statuses": []map[string]any{
+				{
+					"context":     "pull-kubernetes-nmstate-unit-test",
+					"state":       "failure",
+					"description": "Build failed.",
+					"target_url":  "https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-unit-test/1234",
+				},
+				{
+					"context":    "pull-kubernetes-nmstate-e2e",
+					"state":      "success",
+					"target_url": "https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-e2e/1235",
+				},
+				{
+					"context":    "pull-kubernetes-nmstate-lint",
+					"state":      "error",
+					"target_url": "https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-lint/1236",
+				},
+				{
+					"context":    "pull-kubernetes-nmstate-build",
+					"state":      "pending",
+					"target_url": "https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-build/1237",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(result)
+	})
+
+	gh := setupTestClient(t, mux)
+	runs, err := gh.GetCommitStatuses(context.Background(), "owner", "repo", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should only return failure and error states (not success or pending)
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 failed statuses, got %d", len(runs))
+	}
+	if runs[0].Name != "pull-kubernetes-nmstate-unit-test" {
+		t.Errorf("expected name 'pull-kubernetes-nmstate-unit-test', got %q", runs[0].Name)
+	}
+	if runs[0].Status != "completed" {
+		t.Errorf("expected status 'completed', got %q", runs[0].Status)
+	}
+	if runs[0].Conclusion != "failure" {
+		t.Errorf("expected conclusion 'failure', got %q", runs[0].Conclusion)
+	}
+	// Output should include description + target_url
+	expectedOutput := "Build failed.\nhttps://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-unit-test/1234"
+	if runs[0].Output != expectedOutput {
+		t.Errorf("expected output with description and URL, got %q", runs[0].Output)
+	}
+	if runs[1].Name != "pull-kubernetes-nmstate-lint" {
+		t.Errorf("expected name 'pull-kubernetes-nmstate-lint', got %q", runs[1].Name)
+	}
+	// Second entry has no description, should only have target_url
+	if runs[1].Output != "https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/pull-kubernetes-nmstate-lint/1236" {
+		t.Errorf("expected output with URL only (no description), got %q", runs[1].Output)
+	}
+}
+
+func TestGetCommitStatuses_NoFailures(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v3/repos/owner/repo/commits/abc123/status", func(w http.ResponseWriter, r *http.Request) {
+		result := map[string]any{
+			"state": "success",
+			"statuses": []map[string]any{
+				{
+					"context":    "ci/test",
+					"state":      "success",
+					"target_url": "https://example.com/logs",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(result)
+	})
+
+	gh := setupTestClient(t, mux)
+	runs, err := gh.GetCommitStatuses(context.Background(), "owner", "repo", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Errorf("expected 0 failed statuses, got %d", len(runs))
+	}
+}
+
 func TestGetCheckRuns_UsesPerPage100(t *testing.T) {
 	var receivedPerPage int
 	mux := http.NewServeMux()

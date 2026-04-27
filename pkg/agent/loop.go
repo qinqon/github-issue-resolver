@@ -555,6 +555,15 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
+		// Also query commit statuses (e.g. Prow) and merge into results
+		statusFailures, err := a.gh.GetCommitStatuses(ctx, a.cfg.Owner, a.cfg.Repo, headSHA)
+		if err != nil {
+			a.logger.Warn("failed to get commit statuses", "pr", work.PRNumber, "error", err)
+			// Non-fatal: continue with check runs only
+		} else {
+			runs = append(runs, statusFailures...)
+		}
+
 		// Collect completed failures — act immediately without waiting for all checks
 		var failures []CheckRun
 		for _, r := range runs {
@@ -571,7 +580,13 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		// Threshold of 50 chars filters out generic GitHub Actions boilerplate
 		// (e.g., "Process completed with exit code 1") that doesn't provide
 		// enough context for meaningful analysis.
+		// Skip entries with ID==0: these are commit-status entries (e.g. Prow)
+		// where Output contains a target_url, not log text, and no check-run
+		// log is available via the GitHub Actions API.
 		for i, f := range failures {
+			if f.ID == 0 {
+				continue
+			}
 			trimmed := strings.TrimSpace(f.Output)
 			if len(trimmed) < 50 {
 				log, err := a.gh.GetCheckRunLog(ctx, a.cfg.Owner, a.cfg.Repo, f.ID)
