@@ -212,7 +212,11 @@ Instructions:
    - IMPORTANT: Do NOT mention the PR changes, the PR number, or what the PR modifies in your explanation.
      Focus ONLY on describing the failure itself: what test failed, what the error was, and why it looks flaky or infrastructure-related.
      The explanation will be used to create a standalone flaky test issue, so it must make sense without any PR context.
-3. If the failure IS directly related to the PR changes:
+3. If the failure IS directly related to the PR changes, CRITICALLY EVALUATE the fix before applying it:
+   - Verify the failure is actually caused by the PR changes, not a flaky test or infrastructure issue
+   - If the fix involves changing test expectations, confirm the new behavior is correct rather than just making the test pass
+   - If the failure is in code the PR did not touch, treat it as UNRELATED (see step 2) even if it looks related
+   - Prefer minimal, targeted fixes over broad refactoring — do not change more code than necessary
    - Fix the code so that CI passes
    - Run "make lint" and "make test" locally to verify
    - CRITICAL: After you are done fixing, your FINAL text output MUST start with the word RELATED

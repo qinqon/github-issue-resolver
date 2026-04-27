@@ -270,6 +270,13 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"UNRELATED",
 		"RELATED",
 		"Do NOT push",
+		// Critical evaluation criteria
+		"CRITICALLY EVALUATE",
+		"Verify the failure is actually caused by the PR changes",
+		"changing test expectations",
+		"confirm the new behavior is correct",
+		"treat it as UNRELATED",
+		"minimal, targeted fixes",
 	}
 
 	for _, want := range checks {
