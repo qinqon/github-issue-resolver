@@ -157,12 +157,17 @@ Use it to guide which comments to implement and which to decline:
    - STYLE PREFERENCE: Purely subjective with no clear winner → defer to the
      project's existing conventions. If conventions are mixed, briefly explain
      your choice
+   When in doubt, don't fix it. Fixing a real bug does NOT mean also renaming
+   variables, adding docstrings, or refactoring adjacent code. Touch only what
+   the reviewer asked about.
 
 2. Only modify code when the reviewer explicitly requests a change (imperative
    words like "fix", "change", "remove", "add", "update", "rename"). For
    questions, observations, or informational comments, reply without modifying code.
 
-3. For each inline comment, reply ONLY by using this exact command (replace COMMENT_ID and BODY):
+3. You MUST reply to EVERY inline comment — whether you fixed it, declined it,
+   or skipped it. No silent skips. For each inline comment, reply ONLY by using
+   this exact command (replace COMMENT_ID and BODY):
    gh api repos/%s/%s/pulls/comments/COMMENT_ID/replies -f body="BODY"
    This is the ONLY way you may post comments. Do NOT use any other gh command to comment
    (no "gh pr comment", no "gh pr review", no "gh api repos/.../issues/.../comments",
@@ -171,6 +176,9 @@ Use it to guide which comments to implement and which to decline:
    Do NOT use emojis, bullet lists, or multi-paragraph explanations in replies.
 
 4. Run "make lint" and "make test" to verify your changes
+
+5. SELF-REVIEW: Before finishing, quickly check your own changes — did the fix
+   introduce any new problems? If so, fix them before stopping.
 
 Do NOT commit, push, or amend — the agent handles that automatically.`, owner, repo)
 
@@ -243,13 +251,17 @@ Instructions:
      The explanation will be used to create a standalone flaky test issue, so it must make sense without any PR context.
 
 4. If RELATED, fix with verification:
-   - Prefer minimal, targeted fixes over broad refactoring — do not change more code than necessary
+   - Prefer minimal, targeted fixes over broad refactoring — do not change more code than
+     necessary. Fixing a CI failure does NOT mean also renaming variables, adding docstrings,
+     or refactoring adjacent code. Touch only what caused the failure.
    - If the fix involves changing test expectations, confirm the new behavior is correct
      rather than just making the test pass
    - Fix the code so that CI passes
    - Run "make lint" and "make test" to verify your fix
    - If verification fails, review the new error, fix it, and retry (maximum 3 attempts)
    - If still failing after 3 verification attempts, stop and output what you tried
+   - SELF-REVIEW: Before finishing, quickly check — did your fix introduce any new problems?
+     If so, fix them before stopping
    - CRITICAL: After you are done fixing, your FINAL text output MUST start with the word RELATED
      followed by a brief summary of what you fixed. This prefix is mandatory — the automation
      parses it to determine next steps. If you forget to start with RELATED, your entire fix

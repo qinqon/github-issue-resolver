@@ -283,8 +283,7 @@ specs/              Design specifications for each component
 
 ## Acknowledgments
 
-Prompt engineering patterns in this project were inspired by
-[openshift-eng/ai-helpers](https://github.com/openshift-eng/ai-helpers)
-(Apache License 2.0), including structured step-by-step investigation
-procedures, "be tenacious" root-cause tracing, review comment
-classification, concise reply formatting, and commit convention detection.
+Prompt engineering patterns in this project were inspired by:
+
+- [openshift-eng/ai-helpers](https://github.com/openshift-eng/ai-helpers) (Apache License 2.0) — structured step-by-step investigation procedures, "be tenacious" root-cause tracing, review comment classification, concise reply formatting, and commit convention detection.
+- [ambient-code/workflows](https://github.com/ambient-code/workflows) — "don't over-fix" guardrails, mandatory reply on every review thread, and self-review before push.
