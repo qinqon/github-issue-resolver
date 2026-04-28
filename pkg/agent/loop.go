@@ -732,15 +732,17 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 			// Create a flaky CI issue if configured
 			if a.cfg.CreateFlakyIssues {
-				// Skip flaky issue creation if check run output is still too short after
-				// attempting to fetch full logs. Without sufficient output, Claude cannot
-				// meaningfully match against existing issues or describe the root cause.
+				// Skip flaky issue creation if both the check run output and the
+				// agent's explanation are too short. The agent may have gathered
+				// useful context from its own investigation even when the check
+				// run output was empty.
 				trimmedOutput := strings.TrimSpace(task.failures[0].Output)
-				if len(trimmedOutput) < 50 {
-					a.logger.Warn("skipping flaky issue creation: check run output is empty or too short",
+				if len(trimmedOutput) < 50 && len(explanation) < 50 {
+					a.logger.Warn("skipping flaky issue creation: insufficient context",
 						"pr", task.work.PRNumber,
 						"check", task.failures[0].Name,
-						"output_length", len(trimmedOutput))
+						"output_length", len(trimmedOutput),
+						"explanation_length", len(explanation))
 					return
 				}
 
