@@ -76,6 +76,20 @@ jobs:
           path: .agentready/
           retention-days: 30
 
+  image-build:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Containerfile
+          push: false
+
   image:
     runs-on: ubuntu-latest
     needs: test

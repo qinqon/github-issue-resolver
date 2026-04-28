@@ -1,5 +1,6 @@
 # Stage 1: Build the Go binary
-FROM golang:1.25 AS builder
+ARG GO_VERSION=1.26.0
+FROM golang:${GO_VERSION} AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -20,8 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go (matches kubernetes-nmstate requirements)
-ARG GO_VERSION=1.25.0
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz
+ARG GO_VERSION
+ARG TARGETARCH
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:${PATH}"
 
 # Install gh CLI
