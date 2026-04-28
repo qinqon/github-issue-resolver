@@ -556,10 +556,6 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			continue
 		}
 
-		if work.LastCheckedCISHA == headSHA && work.CIFixAttempts == 0 {
-			continue
-		}
-
 		runs, err := a.gh.GetCheckRuns(ctx, a.cfg.Owner, a.cfg.Repo, headSHA)
 		if err != nil {
 			a.logger.Error("failed to get check runs", "pr", work.PRNumber, "error", err)
@@ -577,13 +573,29 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 		// Collect completed failures — act immediately without waiting for all checks
 		var failures []CheckRun
+		allCompleted := true
 		for _, r := range runs {
 			if r.Status == "completed" && r.Conclusion == "failure" {
 				failures = append(failures, r)
 			}
+			if r.Status != "completed" {
+				allCompleted = false
+			}
 		}
 
 		if len(runs) == 0 || len(failures) == 0 {
+			// If all checks completed with no failures and this SHA was already
+			// checked, skip. Only set LastCheckedCISHA when all checks are done
+			// to avoid skipping late-finishing failures.
+			if allCompleted && work.LastCheckedCISHA != headSHA {
+				work.LastCheckedCISHA = headSHA
+			}
+			continue
+		}
+
+		// Fast path: skip if this SHA was fully checked (all completed, no fix attempts)
+		// and there are no uninvestigated failures
+		if work.LastCheckedCISHA == headSHA && work.CIFixAttempts == 0 && allCompleted {
 			continue
 		}
 
