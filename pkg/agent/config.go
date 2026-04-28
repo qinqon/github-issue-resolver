@@ -31,6 +31,7 @@ type Config struct {
 	TriageJobs        []string // CI job URLs to monitor for periodic job triage
 	Agent             string   // coding agent backend: "claudecode" or "opencode"
 	AgentModel        string   // model override for OpenCode (empty = default)
+	Version           string   // build version (commit SHA) for comment watermarks
 
 	// GitHub App authentication (alternative to GITHUB_TOKEN)
 	GitHubAppID             int64

@@ -427,9 +427,10 @@ func main() {
 		a.SetTokenFunc(tokenFunc)
 	}
 
-	// Parse exit-on-new-version flag
+	// Parse exit-on-new-version flag and set version for comment watermarks
 	var exitOnNewVersionOwner, exitOnNewVersionRepo string
 	commitSHA := getCommitSHA()
+	cfg.Version = commitSHA
 	if exitOnNewVersion != "" {
 		if parts := strings.SplitN(exitOnNewVersion, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			exitOnNewVersionOwner = parts[0]
