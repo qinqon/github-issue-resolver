@@ -757,8 +757,14 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				if err != nil {
 					a.logger.Warn("failed to search for existing flaky issues", "error", err)
 				} else if len(existingIssues) > 0 {
-					// Ask the agent if any existing issue matches this failure
-					matchPrompt := buildFlakyMatchPrompt(task.failures[0].Name, task.failures[0].Output, existingIssues)
+					// Ask the agent if any existing issue matches this failure.
+					// Use the check run output for matching, falling back to the
+					// agent's explanation when the output is empty/short.
+					matchOutput := task.failures[0].Output
+					if len(strings.TrimSpace(matchOutput)) < 50 {
+						matchOutput = explanation
+					}
+					matchPrompt := buildFlakyMatchPrompt(task.failures[0].Name, matchOutput, existingIssues)
 					matchResult, matchErr := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, matchPrompt, a.logger, false)
 					if matchErr != nil {
 						a.logger.Warn("failed to run agent for flaky issue matching", "error", matchErr)
