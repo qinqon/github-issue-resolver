@@ -1,6 +1,6 @@
 # oompa
 
-An autonomous AI-powered code maintenance agent. It uses Claude Code to implement fixes, address reviews, resolve merge conflicts, fix CI failures, and triage flaky tests — all without human intervention beyond the final merge.
+An autonomous AI-powered code maintenance agent. It uses [OpenCode](https://opencode.ai) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to implement fixes, address reviews, resolve merge conflicts, fix CI failures, and triage flaky tests — all without human intervention beyond the final merge.
 
 ## What it does
 
@@ -16,9 +16,9 @@ Claude never merges; a human must approve and merge every PR.
 ## Prerequisites
 
 - Go 1.25+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on `PATH`
-- Google Cloud Application Default Credentials configured (`gcloud auth application-default login` or a service account key)
-- GitHub authentication: either a personal access token (PAT) with repo scope **or** a GitHub App (see below)
+- A coding agent CLI on `PATH`: either [OpenCode](https://opencode.ai) (recommended) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- Provider credentials configured (e.g. `gcloud auth application-default login` for Vertex AI, or `ANTHROPIC_API_KEY` for direct API)
+- GitHub authentication: either `gh auth login` (recommended), a personal access token (PAT) with repo scope, or a GitHub App (see below)
 - `gh` CLI installed and configured as a git credential helper (`gh auth setup-git`)
 
 ## Build
@@ -29,10 +29,20 @@ go build -o oompa ./cmd/oompa
 
 ## Usage
 
-### With a personal access token (PAT)
+### With OpenCode (recommended)
 
 ```bash
-export GITHUB_TOKEN="ghp_..."
+gh auth login                    # one-time setup
+gcloud auth application-default login  # for Vertex AI
+
+./oompa --agent opencode --agent-model google-vertex-anthropic/claude-opus-4-6@default --repo myorg/myrepo
+```
+
+### With Claude Code
+
+```bash
+gh auth login
+export CLAUDE_CODE_USE_VERTEX=1
 export CLOUD_ML_REGION="us-east5"
 export ANTHROPIC_VERTEX_PROJECT_ID="my-gcp-project"
 
@@ -45,10 +55,8 @@ export ANTHROPIC_VERTEX_PROJECT_ID="my-gcp-project"
 export GITHUB_APP_ID="123456"
 export GITHUB_APP_PRIVATE_KEY_PATH="/path/to/private-key.pem"
 export GITHUB_APP_INSTALLATION_ID="78901234"
-export CLOUD_ML_REGION="us-east5"
-export ANTHROPIC_VERTEX_PROJECT_ID="my-gcp-project"
 
-./oompa --repo myorg/myrepo
+./oompa --agent opencode --agent-model google-vertex-anthropic/claude-opus-4-6@default --repo myorg/myrepo
 ```
 
 ### Setting up a GitHub App
@@ -85,6 +93,8 @@ When using GitHub App auth, the agent pushes branches directly to the upstream r
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
 | `--repo` | `OOMPA_REPO` | — | GitHub repo as `owner/repo` (required) |
+| `--agent` | `OOMPA_AGENT` | `claudecode` | Coding agent backend: `claudecode` or `opencode` |
+| `--agent-model` | `OOMPA_AGENT_MODEL` | — | Model override for OpenCode (e.g. `google-vertex-anthropic/claude-opus-4-6@default`) |
 | `--label` | `OOMPA_LABEL` | `good-for-ai` | Issue label to watch |
 | `--clone-dir` | `OOMPA_CLONE_DIR` | `/tmp/oompa-work` | Working directory for clones and worktrees |
 | `--poll-interval` | `OOMPA_POLL_INTERVAL` | `2m` | How often to poll GitHub |
@@ -99,21 +109,19 @@ When using GitHub App auth, the agent pushes branches directly to the upstream r
 | `--create-flaky-issues` | `OOMPA_CREATE_FLAKY_ISSUES` | `false` | Create issues for unrelated CI failures (opt-in) |
 | `--flaky-label` | `OOMPA_FLAKY_LABEL` | `flaky-test` | Label to apply to flaky CI issues |
 | `--triage-jobs` | `OOMPA_TRIAGE_JOBS` | — | Comma-separated CI job URLs to monitor for periodic job triage |
-| `--max-workers` | `OOMPA_MAX_WORKERS` | `1` | Maximum parallel Claude invocations |
+| `--max-workers` | `OOMPA_MAX_WORKERS` | `1` | Maximum parallel agent invocations |
 | `--exit-on-new-version` | `OOMPA_EXIT_ON_NEW_VERSION` | — | Exit when a new release is available (`owner/repo`) |
 | `--dry-run` | — | `false` | Log actions without executing them |
 | `--one-shot` | — | `false` | Run one poll cycle and exit |
-| — | `GITHUB_TOKEN` | *required (PAT)* | GitHub personal access token |
+| — | `GITHUB_TOKEN` | — | GitHub personal access token (falls back to `gh auth token`) |
 | `--github-app-id` | `GITHUB_APP_ID` | — | GitHub App ID |
 | `--github-app-private-key` | `GITHUB_APP_PRIVATE_KEY_PATH` | — | Path to GitHub App private key PEM file |
 | `--github-app-installation-id` | `GITHUB_APP_INSTALLATION_ID` | — | GitHub App installation ID |
 | `--github-user` | `GITHUB_USER` | auto-detected | GitHub username (e.g. `myapp[bot]`) |
 | `--git-author-name` | `GIT_AUTHOR_NAME` | auto-detected | Git commit author name |
 | `--git-author-email` | `GIT_AUTHOR_EMAIL` | auto-detected | Git commit author email |
-| `--vertex-region` | `CLOUD_ML_REGION` | *required* | GCP Vertex AI region |
-| `--vertex-project` | `ANTHROPIC_VERTEX_PROJECT_ID` | *required* | GCP project ID for Vertex AI |
 
-`GITHUB_TOKEN` is required when not using GitHub App auth. When all three `--github-app-*` flags are provided, the agent uses App auth instead.
+`GITHUB_TOKEN` is optional — if not set, oompa falls back to `gh auth token`. When all three `--github-app-*` flags are provided, the agent uses App auth instead.
 
 ## Running as a systemd service
 
@@ -209,12 +217,16 @@ systemctl --user enable --now oompa-periodic-triage.timer
 
 ### Environment file
 
-Store credentials in `~/.config/oompa/env`:
+Store provider credentials in `~/.config/oompa/env`:
 
 ```bash
-GITHUB_TOKEN=ghp_...
+# For Vertex AI (used by both OpenCode and Claude Code)
 CLOUD_ML_REGION=us-east5
 ANTHROPIC_VERTEX_PROJECT_ID=my-gcp-project
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
+GOOGLE_CLOUD_PROJECT=my-gcp-project
+
+# GITHUB_TOKEN is optional — oompa falls back to `gh auth token`
 ```
 
 ### How it works
@@ -268,3 +280,11 @@ specs/              Design specifications for each component
 - No force-pushes.
 - On failure, the issue is labeled `ai-failed` with a comment explaining the error. A human removes the label and re-adds `good-for-ai` to retry.
 - Billing is controlled through GCP IAM on the Vertex AI project.
+
+## Acknowledgments
+
+Prompt engineering patterns in this project were inspired by
+[openshift-eng/ai-helpers](https://github.com/openshift-eng/ai-helpers)
+(Apache License 2.0), including structured step-by-step investigation
+procedures, "be tenacious" root-cause tracing, review comment
+classification, concise reply formatting, and commit convention detection.

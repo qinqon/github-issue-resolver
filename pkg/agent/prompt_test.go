@@ -211,7 +211,8 @@ func TestBuildConflictResolutionPrompt(t *testing.T) {
 		"issue #42",
 		"Fix nil pointer in handler",
 		"merge conflicts",
-		"git fetch origin",
+		"git remote -v",
+		"git fetch",
 		"git rebase origin/main",
 		"git add",
 		"git rebase --continue",
@@ -270,13 +271,14 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"UNRELATED",
 		"RELATED",
 		"Do NOT push",
-		// Critical evaluation criteria
-		"CRITICALLY EVALUATE",
-		"Verify the failure is actually caused by the PR changes",
+		// Investigation and evaluation criteria
+		"INVESTIGATE the failure systematically",
+		"Be tenacious",
+		"Trace to the specific error message",
 		"changing test expectations",
 		"confirm the new behavior is correct",
-		"treat it as UNRELATED",
 		"minimal, targeted fixes",
+		"maximum 3 attempts",
 	}
 
 	for _, want := range checks {
