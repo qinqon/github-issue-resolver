@@ -437,20 +437,8 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 		})
 	}
 
-	// Parallel phase: run triage then implementation, amend/push, post fallback replies
+	// Parallel phase: run agent to address review feedback, then push changes
 	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task reviewTask) {
-		// Step 1: Triage — produce a structured summary (read-only, no code changes)
-		triageSummary := ""
-		triagePrompt := buildReviewTriagePrompt(*task.work, task.humanComments, task.humanReviews, a.cfg.Owner, a.cfg.Repo)
-		triageResult, triageErr := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, triagePrompt, a.logger, false)
-		if triageErr != nil {
-			a.logger.Warn("triage step failed, proceeding without triage summary", "pr", task.work.PRNumber, "error", triageErr)
-		} else {
-			triageSummary = triageResult.Result
-			a.logger.Info("review triage summary", "pr", task.work.PRNumber, "triage", triageSummary)
-		}
-
-		// Step 2: Implementation — address review comments guided by triage summary
 		// Capture local HEAD before agent runs so we can detect if it committed directly
 		headBefore, _, err := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
 		if err != nil {
@@ -458,58 +446,29 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 		}
 		headSHABefore := strings.TrimSpace(string(headBefore))
 
-		prompt := buildReviewResponsePrompt(*task.work, task.humanComments, task.humanReviews, a.cfg.Owner, a.cfg.Repo, triageSummary)
-		shouldResume := triageErr == nil
-		_, err = a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, prompt, a.logger, shouldResume)
+		prompt := buildReviewResponsePrompt(*task.work, task.humanComments, task.humanReviews, a.cfg.Owner, a.cfg.Repo)
+		_, err = a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, prompt, a.logger, true)
 		if err != nil {
 			a.logger.Error("agent failed to address review", "pr", task.work.PRNumber, "error", err)
 			return
 		}
 
-		// Amend and push if Claude made changes
-		pushed := false
+		// Push if agent made changes (uncommitted or committed directly)
 		hasChanges := a.hasUncommittedChanges(ctx, task.work.WorktreePath)
 		if hasChanges {
 			if err := a.gitAmendAll(ctx, task.work.WorktreePath); err != nil {
 				a.logger.Error("failed to amend commit", "pr", task.work.PRNumber, "error", err)
 			} else if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 				a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
-			} else {
-				pushed = true
 			}
 		} else {
-			// No uncommitted changes — Claude may have committed or amended directly.
-			// Check if HEAD changed since before Claude ran.
 			headAfter, _, revErr := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
 			headSHAAfter := strings.TrimSpace(string(headAfter))
 			if revErr == nil && headSHABefore != "" && headSHAAfter != headSHABefore {
-				a.logger.Info("Claude committed directly, pushing", "pr", task.work.PRNumber)
+				a.logger.Info("agent committed directly, pushing", "pr", task.work.PRNumber)
 				if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 					a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
-				} else {
-					pushed = true
 				}
-			}
-		}
-
-		// Post fallback reply for comments Claude didn't reply to
-		updatedComments, _ := a.gh.GetPRReviewComments(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, 0)
-		repliedTo := make(map[int64]bool)
-		for _, c := range updatedComments {
-			if c.InReplyToID != 0 && c.User == a.cfg.GitHubUser {
-				repliedTo[c.InReplyToID] = true
-			}
-		}
-		for _, c := range task.humanComments {
-			if repliedTo[c.ID] {
-				continue
-			}
-			fallback := "Reviewed — no code changes needed for this comment.\n\n" + a.botComment()
-			if pushed {
-				fallback = "Addressed in the latest push.\n\n" + a.botComment()
-			}
-			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, c.ID, fallback); err != nil {
-				a.logger.Warn("failed to reply to comment", "comment", c.ID, "error", err)
 			}
 		}
 
