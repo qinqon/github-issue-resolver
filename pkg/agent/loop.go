@@ -760,7 +760,13 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 					return
 				}
 
-				issueTitle := fmt.Sprintf("Flaky CI: %s", task.failures[0].Name)
+				failingTest := parseFailingTest(explanation)
+				var issueTitle string
+				if failingTest != "" {
+					issueTitle = fmt.Sprintf("Flaky CI: %s / %s", task.failures[0].Name, failingTest)
+				} else {
+					issueTitle = fmt.Sprintf("Flaky CI: %s", task.failures[0].Name)
+				}
 
 				// Search for existing open issues with the flaky label
 				searchQuery := fmt.Sprintf("repo:%s/%s is:issue is:open label:%s",
@@ -825,6 +831,22 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				}
 
 				// No existing issue matched, create a new one
+				// Use the failing test name in the body if available, otherwise fall back to lane name
+				testNameForBody := task.failures[0].Name
+				if failingTest != "" {
+					testNameForBody = failingTest
+				}
+				// Strip the FAILING_TEST: line from the explanation so it doesn't appear as raw text in the issue body
+				cleanedExplanation := explanation
+				if failingTest != "" {
+					var lines []string
+					for line := range strings.SplitSeq(explanation, "\n") {
+						if !strings.HasPrefix(strings.TrimSpace(line), "FAILING_TEST:") {
+							lines = append(lines, line)
+						}
+					}
+					cleanedExplanation = strings.TrimSpace(strings.Join(lines, "\n"))
+				}
 				issueBody := fmt.Sprintf("### Which jobs are flaking?\n\n"+
 					"%s\n\n"+
 					"Detected in PR #%d, commit %s.\n\n"+
@@ -838,7 +860,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 					"Automatically created by [oompa](https://github.com/qinqon/oompa).\n\n"+
 					"%s",
 					task.failures[0].Name, task.work.PRNumber, shortSHA(task.headSHA),
-					task.failures[0].Name, time.Now().Format("2006-01-02"), explanation,
+					testNameForBody, time.Now().Format("2006-01-02"), cleanedExplanation,
 					a.botComment())
 				issueNum, err = a.gh.CreateIssue(ctx, a.cfg.Owner, a.cfg.Repo, issueTitle, issueBody, []string{a.cfg.FlakyLabel})
 				if err != nil {
@@ -1427,6 +1449,19 @@ func parseFlakyMatch(response string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// parseFailingTest extracts the failing test name from an UNRELATED explanation.
+// It looks for a line starting with "FAILING_TEST:" and returns the trimmed value.
+// Returns empty string if no FAILING_TEST line is found.
+func parseFailingTest(explanation string) string {
+	for line := range strings.SplitSeq(explanation, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "FAILING_TEST:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "FAILING_TEST:"))
+		}
+	}
+	return ""
 }
 
 // shortSHA returns the first 7 characters of a SHA, or the full string if shorter.

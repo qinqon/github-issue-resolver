@@ -145,7 +145,10 @@ Instructions:
 
 3. If UNRELATED (flaky test, not infrastructure):
    - Do NOT attempt to fix it, do NOT modify any files
-   - Your output MUST start with the word UNRELATED followed by a brief explanation
+   - Your output MUST start with the word UNRELATED, then on the NEXT LINE include FAILING_TEST: followed by the
+     name of the specific test that failed (e.g. "FAILING_TEST: TestDualStack/should_create_two_pods").
+     If multiple tests failed, pick the primary one. If no specific test name is identifiable, omit the line.
+   - After the FAILING_TEST line, include a brief explanation of the failure.
    - IMPORTANT: Do NOT mention the PR changes, the PR number, or what the PR modifies in your explanation.
      Focus ONLY on describing the failure itself: what test failed, what the error was, and why it looks flaky.
      The explanation will be used to create a standalone flaky test issue, so it must make sense without any PR context.

@@ -731,7 +731,7 @@ func TestProcessCIFailures_SkipsPendingCI(t *testing.T) {
 }
 
 func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
-	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
+	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED\nFAILING_TEST: TestDB/connection_timeout\nThe test database connection times out intermittently"})
 	gh := &mockGitHubClient{
 		checkRuns: []CheckRun{
 			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
@@ -756,13 +756,13 @@ func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
 
 	agent.ProcessCIFailures(context.Background())
 
-	// Check that a flaky issue was created
+	// Check that a flaky issue was created with the failing test name in the title
 	if len(gh.createdIssues) != 1 {
 		t.Fatalf("expected 1 created issue, got %d", len(gh.createdIssues))
 	}
 	issue := gh.createdIssues[0]
-	if issue.Title != "Flaky CI: integration-tests" {
-		t.Errorf("expected title 'Flaky CI: integration-tests', got %q", issue.Title)
+	if issue.Title != "Flaky CI: integration-tests / TestDB/connection_timeout" {
+		t.Errorf("expected title 'Flaky CI: integration-tests / TestDB/connection_timeout', got %q", issue.Title)
 	}
 	if len(issue.Labels) != 1 || issue.Labels[0] != "flaky-test" {
 		t.Errorf("expected labels ['flaky-test'], got %v", issue.Labels)
@@ -782,6 +782,14 @@ func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
 	}
 	if !strings.Contains(issue.Body, "Automatically created by [oompa]") {
 		t.Errorf("expected issue body to contain oompa attribution, got %q", issue.Body)
+	}
+	// Body should use the failing test name, not the lane name, in the "Which tests" section
+	if !strings.Contains(issue.Body, "TestDB/connection_timeout") {
+		t.Errorf("expected issue body to contain the failing test name, got %q", issue.Body)
+	}
+	// Body should NOT contain the raw FAILING_TEST: line
+	if strings.Contains(issue.Body, "FAILING_TEST:") {
+		t.Errorf("expected FAILING_TEST: line to be stripped from issue body, got %q", issue.Body)
 	}
 
 	// Check that a comment was added to the PR
@@ -1259,6 +1267,27 @@ func TestParseFlakyMatch(t *testing.T) {
 		num, ok := parseFlakyMatch(tt.input)
 		if num != tt.wantNum || ok != tt.wantOK {
 			t.Errorf("parseFlakyMatch(%q) = (%d, %v), want (%d, %v)", tt.input, num, ok, tt.wantNum, tt.wantOK)
+		}
+	}
+}
+
+func TestParseFailingTest(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"FAILING_TEST: TestDualStack/should_create_two_pods\nThe test timed out", "TestDualStack/should_create_two_pods"},
+		{"FAILING_TEST:TestFoo\nSome explanation", "TestFoo"},
+		{"FAILING_TEST:  Hybrid mode > works with API-only config  \nDetails here", "Hybrid mode > works with API-only config"},
+		{"The test database connection times out intermittently", ""},
+		{"", ""},
+		{"FAILING_TEST:\nSome explanation", ""},
+		{"Some text\nFAILING_TEST: TestBar\nMore text", "TestBar"},
+	}
+	for _, tt := range tests {
+		got := parseFailingTest(tt.input)
+		if got != tt.want {
+			t.Errorf("parseFailingTest(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
