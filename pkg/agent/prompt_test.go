@@ -351,3 +351,34 @@ func TestBuildPeriodicCITriagePrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildFlakyMatchPrompt_RootCauseInstructions(t *testing.T) {
+	existingIssues := []Issue{
+		{Number: 50, Title: "Flaky CI: Build-PR", Body: "koji 502 error"},
+	}
+
+	prompt := buildFlakyMatchPrompt("Build-PR", "HTTP 503 from koji.fedoraproject.org", existingIssues)
+
+	checks := []string{
+		"Build-PR",
+		"HTTP 503 from koji.fedoraproject.org",
+		"Issue #50",
+		"Flaky CI: Build-PR",
+		// Root-cause matching instructions
+		"ROOT CAUSE",
+		"not error message",
+		"same underlying problem",
+		"Different HTTP errors from the same server",
+		"same cause",
+		"Which component/service failed",
+		"Do NOT require exact error message matches",
+		"MATCH",
+		"NONE",
+	}
+
+	for _, want := range checks {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
