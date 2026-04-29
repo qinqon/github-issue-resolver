@@ -272,14 +272,20 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"RELATED",
 		"INFRASTRUCTURE",
 		"Do NOT push",
-		// Investigation and evaluation criteria
-		"INVESTIGATE the failure systematically",
-		"Be tenacious",
-		"Trace to the specific error message",
+		// Investigation methodology
+		"ce-debug",
+		"skill tool",
+		"Triage",
+		"Investigate",
+		"Root Cause",
+		"causal chain",
+		// Fix criteria
+		"Fix ONE thing at a time",
+		"shotgun debugging",
 		"changing test expectations",
-		"confirm the new behavior is correct",
+		"confirm the new behavior is",
 		"minimal, targeted fixes",
-		"maximum 3 attempts",
+		"diagnose WHY",
 		// INFRASTRUCTURE classification criteria
 		"transient environment or infrastructure issue",
 		"HTTP 502/503",
