@@ -690,30 +690,28 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		cleaned := strings.TrimLeft(strings.TrimSpace(result.Result), "*_")
 
 		// Check if the response contains UNRELATED, INFRASTRUCTURE, or RELATED.
-		// The agent sometimes puts preamble text before the keyword (e.g.
-		// "Same infrastructure failure.\n\nUNRELATED — ..."), so scan the
-		// first few lines instead of requiring it as the very first word.
-		startsWithUnrelated := false
-		startsWithRelated := false
-		startsWithInfra := false
-		for _, line := range strings.SplitN(cleaned, "\n", 5) {
-			trimmed := strings.TrimLeft(strings.TrimSpace(line), "*_")
-			if strings.HasPrefix(trimmed, "INFRASTRUCTURE") {
-				startsWithInfra = true
-				break
+		// The agent often puts detailed analysis before the keyword, sometimes
+		// many lines deep. Scan the entire response for the keyword on any line.
+		// Priority: INFRASTRUCTURE > UNRELATED > RELATED (check in this order
+		// so RELATED doesn't match the "UNRELATED" substring).
+		foundKeyword := ""
+		for _, line := range strings.Split(cleaned, "\n") {
+			trimmed := strings.TrimLeft(strings.TrimSpace(line), "*_-—:>")
+			switch {
+			case strings.HasPrefix(trimmed, "INFRASTRUCTURE"):
+				foundKeyword = "INFRASTRUCTURE"
+			case strings.HasPrefix(trimmed, "UNRELATED") && foundKeyword == "":
+				foundKeyword = "UNRELATED"
+			case strings.HasPrefix(trimmed, "RELATED") && foundKeyword == "":
+				foundKeyword = "RELATED"
 			}
-			if strings.HasPrefix(trimmed, "UNRELATED") {
-				startsWithUnrelated = true
-				break
-			}
-			if strings.HasPrefix(trimmed, "RELATED") {
-				startsWithRelated = true
-				break
+			if foundKeyword == "INFRASTRUCTURE" {
+				break // highest priority, stop scanning
 			}
 		}
 
-		if !startsWithUnrelated && !startsWithRelated && !startsWithInfra {
-			a.logger.Warn("agent response did not contain UNRELATED, INFRASTRUCTURE, or RELATED in first 5 lines, skipping to avoid noise",
+		if foundKeyword == "" {
+			a.logger.Warn("agent response did not contain UNRELATED, INFRASTRUCTURE, or RELATED, skipping to avoid noise",
 				"pr", task.work.PRNumber,
 				"response_preview", truncateString(cleaned, 200))
 			task.work.CIFixAttempts++
@@ -722,7 +720,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			return
 		}
 
-		if startsWithInfra {
+		if foundKeyword == "INFRASTRUCTURE" {
 			a.logger.Info("CI failure is an infrastructure issue", "pr", task.work.PRNumber)
 			// Extract explanation: everything after INFRASTRUCTURE in the full response,
 			// stripping any separator characters (e.g. "INFRASTRUCTURE: ..." or "INFRASTRUCTURE — ...").
@@ -744,7 +742,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			return
 		}
 
-		if startsWithUnrelated {
+		if foundKeyword == "UNRELATED" {
 			a.logger.Info("CI failure is unrelated to PR changes", "pr", task.work.PRNumber)
 			// Extract explanation: everything after UNRELATED in the full response,
 			// stripping any separator characters (e.g. "UNRELATED: ..." or "UNRELATED — ...").
