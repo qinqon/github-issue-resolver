@@ -877,6 +877,60 @@ func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
 	}
 }
 
+func TestProcessCIFailures_InfrastructureSkipsFlakyIssue(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "INFRASTRUCTURE Fedora koji server returned HTTP 502 Bad Gateway"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "Build-PR", Status: "completed", Conclusion: "failure", Output: "HTTP 502 Bad Gateway from koji.fedoraproject.org"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Building package...\nFetching from koji.fedoraproject.org...\nHTTP 502 Bad Gateway\nBuild failed",
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.CreateFlakyIssues = true // Even with flaky issues enabled, INFRASTRUCTURE should skip
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Check that NO flaky issue was created (infrastructure != flaky)
+	if len(gh.createdIssues) != 0 {
+		t.Errorf("expected 0 created issues for INFRASTRUCTURE classification, got %d", len(gh.createdIssues))
+	}
+
+	// Check that exactly 1 comment was posted (the infrastructure notice)
+	if len(gh.addedComments) != 1 {
+		t.Fatalf("expected 1 comment (infrastructure notice), got %d", len(gh.addedComments))
+	}
+
+	// Verify the comment mentions infrastructure
+	if !strings.Contains(gh.addedComments[0], "infrastructure issue") {
+		t.Errorf("expected comment to mention infrastructure issue, got: %q", gh.addedComments[0])
+	}
+	if !strings.Contains(gh.addedComments[0], "Build-PR") {
+		t.Errorf("expected comment to mention the check name, got: %q", gh.addedComments[0])
+	}
+
+	// Verify state was updated correctly
+	work := agent.state.ActiveIssues[42]
+	if work.LastCIStatus != "infrastructure-failure" {
+		t.Errorf("expected LastCIStatus 'infrastructure-failure', got %q", work.LastCIStatus)
+	}
+	if work.CIFixAttempts != 0 {
+		t.Errorf("expected 0 CI fix attempts for infrastructure failure, got %d", work.CIFixAttempts)
+	}
+}
+
 func TestProcessCIFailures_SkipsFlakyIssueWhenDisabled(t *testing.T) {
 	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
 	gh := &mockGitHubClient{
