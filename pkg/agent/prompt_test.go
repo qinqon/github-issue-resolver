@@ -179,12 +179,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		// Investigation methodology
 		"/ce-debug",
 		// Fix criteria
-		"Fix ONE thing at a time",
-		"shotgun debugging",
-		"changing test expectations",
-		"confirm the new behavior is",
-		"minimal, targeted fixes",
-		"diagnose WHY",
+		"Fix the code so that CI passes",
 		// INFRASTRUCTURE classification criteria
 		"transient environment or infrastructure issue",
 		"HTTP 502/503",

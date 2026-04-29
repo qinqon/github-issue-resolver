@@ -20,7 +20,7 @@ Claude never merges; a human must approve and merge every PR.
 - Provider credentials configured (e.g. `gcloud auth application-default login` for Vertex AI, or `ANTHROPIC_API_KEY` for direct API)
 - GitHub authentication: either `gh auth login` (recommended), a personal access token (PAT) with repo scope, or a GitHub App (see below)
 - `gh` CLI installed and configured as a git credential helper (`gh auth setup-git`)
-- (Optional) [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) for deeper CI failure investigation:
+- [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) for CI investigation, review handling, and commit creation:
   - OpenCode: `bunx @every-env/compound-plugin install compound-engineering --to opencode`
   - Claude Code: `/plugin install compound-engineering` from the marketplace
 
