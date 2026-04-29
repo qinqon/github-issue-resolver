@@ -20,6 +20,9 @@ Claude never merges; a human must approve and merge every PR.
 - Provider credentials configured (e.g. `gcloud auth application-default login` for Vertex AI, or `ANTHROPIC_API_KEY` for direct API)
 - GitHub authentication: either `gh auth login` (recommended), a personal access token (PAT) with repo scope, or a GitHub App (see below)
 - `gh` CLI installed and configured as a git credential helper (`gh auth setup-git`)
+- (Optional) [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) for deeper CI failure investigation:
+  - OpenCode: `bunx @every-env/compound-plugin install compound-engineering --to opencode`
+  - Claude Code: `/plugin install compound-engineering` from the marketplace
 
 ## Build
 
@@ -288,3 +291,4 @@ Prompt engineering patterns in this project were inspired by:
 
 - [openshift-eng/ai-helpers](https://github.com/openshift-eng/ai-helpers) (Apache License 2.0) — structured step-by-step investigation procedures, "be tenacious" root-cause tracing, review comment classification, concise reply formatting, and commit convention detection.
 - [ambient-code/workflows](https://github.com/ambient-code/workflows) — "don't over-fix" guardrails, mandatory reply on every review thread, and self-review before push.
+- [EveryInc/compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) (MIT License) — structured debugging methodology with backward code-path tracing, hypothesis-prediction framework, causal chain gates, and investigation techniques. Used via the `ce-debug` skill for CI failure investigation.
