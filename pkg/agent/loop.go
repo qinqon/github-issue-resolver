@@ -757,28 +757,54 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 				if err != nil {
 					a.logger.Warn("failed to search for existing flaky issues", "error", err)
 				} else if len(existingIssues) > 0 {
-					// Ask the agent if any existing issue matches this failure.
-					// Use the check run output for matching, falling back to the
-					// agent's explanation when the output is empty/short.
-					matchOutput := task.failures[0].Output
-					if len(strings.TrimSpace(matchOutput)) < 50 {
-						matchOutput = explanation
+					// Fast path: exact title match skips LLM matching entirely.
+					// This handles the most common duplicate case (same check name)
+					// and prevents duplicates when the same check fails on multiple
+					// PRs in the same poll cycle.
+					for _, existing := range existingIssues {
+						if existing.Title == issueTitle {
+							issueNum = existing.Number
+							a.logger.Info("exact title match for existing flaky CI issue", "issue", issueNum, "check", task.failures[0].Name)
+							break
+						}
 					}
-					matchPrompt := buildFlakyMatchPrompt(task.failures[0].Name, matchOutput, existingIssues)
-					matchResult, matchErr := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, matchPrompt, a.logger, false)
-					if matchErr != nil {
-						a.logger.Warn("failed to run agent for flaky issue matching", "error", matchErr)
-					} else {
+
+					// If no exact title match, ask the agent for root-cause matching.
+					if issueNum == 0 {
+						// Use the check run output for matching, falling back to the
+						// agent's explanation when the output is empty/short.
+						matchOutput := task.failures[0].Output
+						if len(strings.TrimSpace(matchOutput)) < 50 {
+							matchOutput = explanation
+						}
+						matchPrompt := buildFlakyMatchPrompt(task.failures[0].Name, matchOutput, existingIssues)
+						matchResult, matchErr := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, matchPrompt, a.logger, false)
+						if matchErr != nil {
+							a.logger.Warn("failed to run agent for flaky issue matching", "error", matchErr)
+						} else {
 						matchResponse := strings.TrimSpace(matchResult.Result)
 						if matchedNum, ok := parseFlakyMatch(matchResponse); ok {
-							issueNum = matchedNum
-							a.logger.Info("agent matched existing flaky CI issue", "issue", issueNum, "check", task.failures[0].Name)
-							if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-								fmt.Sprintf("This appears to be a duplicate of existing flaky test issue #%d.\n\n%s", issueNum, a.botComment())); err != nil {
-								a.logger.Error("failed to post existing flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+							for _, existing := range existingIssues {
+								if existing.Number == matchedNum {
+									issueNum = matchedNum
+									break
+								}
 							}
-							return
+							if issueNum > 0 {
+								a.logger.Info("agent matched existing flaky CI issue", "issue", issueNum, "check", task.failures[0].Name)
+							} else {
+								a.logger.Warn("agent returned MATCH for unknown issue", "matched_issue", matchedNum, "check", task.failures[0].Name)
+							}
 						}
+						}
+					}
+
+					if issueNum > 0 {
+						if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+							fmt.Sprintf("This appears to be a duplicate of existing flaky test issue #%d.\n\n%s", issueNum, a.botComment())); err != nil {
+							a.logger.Error("failed to post existing flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+						}
+						return
 					}
 				}
 

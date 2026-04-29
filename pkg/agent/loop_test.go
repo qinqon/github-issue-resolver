@@ -925,7 +925,8 @@ func TestProcessCIFailures_SkipsDuplicateFlakyIssue(t *testing.T) {
 			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
 		},
 		searchResults: []Issue{
-			{Number: 50, Title: "Flaky CI: integration-tests", Labels: []string{"flaky-test"}},
+			// Title does NOT match exactly — use a different title to exercise LLM path
+			{Number: 50, Title: "Flaky CI: db-integration", Labels: []string{"flaky-test"}},
 		},
 	}
 	runner := &mockCommandRunner{claudeResults: [][]byte{ciResult, matchResult}}
@@ -957,6 +958,61 @@ func TestProcessCIFailures_SkipsDuplicateFlakyIssue(t *testing.T) {
 	// Verify the duplicate reference comment
 	if !strings.Contains(gh.addedComments[1], "duplicate of existing flaky test issue #50") {
 		t.Errorf("expected duplicate reference comment, got: %q", gh.addedComments[1])
+	}
+}
+
+func TestProcessCIFailures_TitlePreCheckSkipsLLMMatching(t *testing.T) {
+	// When an existing issue has an exact title match ("Flaky CI: <check-name>"),
+	// the agent should skip LLM matching entirely and use the existing issue.
+	ciResult := streamResultJSON(AgentResult{Result: "UNRELATED The Fedora koji server returned 502 Bad Gateway"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "Build-PR", Status: "completed", Conclusion: "failure", Output: "Error: 502 Bad Gateway from koji.fedoraproject.org"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Building package...\nFetching from koji.fedoraproject.org...\nHTTP 502 Bad Gateway\nBuild failed",
+		},
+		searchResults: []Issue{
+			{Number: 99, Title: "Flaky CI: Build-PR", Body: "koji infrastructure failure", Labels: []string{"flaky-test"}},
+		},
+	}
+	// Only one Claude result needed (for CI investigation). No match result needed
+	// because the title pre-check should prevent the LLM matching call.
+	runner := &mockCommandRunner{stdout: ciResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.CreateFlakyIssues = true
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Should NOT have created a new issue
+	if len(gh.createdIssues) != 0 {
+		t.Errorf("expected 0 created issues (title pre-check should match), got %d", len(gh.createdIssues))
+	}
+
+	// Only 1 claude call (CI investigation), NOT 2 (CI + matching)
+	claudeCalls := countClaudeCalls(runner.calls)
+	if claudeCalls != 1 {
+		t.Errorf("expected 1 claude call (CI investigation only, no LLM matching), got %d", claudeCalls)
+	}
+
+	// Should have 2 comments: unrelated notice + duplicate reference
+	if len(gh.addedComments) != 2 {
+		t.Fatalf("expected 2 comments (unrelated + duplicate reference), got %d", len(gh.addedComments))
+	}
+
+	// Verify the duplicate reference points to issue #99
+	if !strings.Contains(gh.addedComments[1], "duplicate of existing flaky test issue #99") {
+		t.Errorf("expected duplicate reference to issue #99, got: %q", gh.addedComments[1])
 	}
 }
 

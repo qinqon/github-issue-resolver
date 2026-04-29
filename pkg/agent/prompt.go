@@ -405,8 +405,14 @@ Existing open issues:
 
 	prompt.WriteString(`
 Instructions:
-- Compare the failing check name and output against each existing issue
-- A match means the same test or same root cause, even if titles differ
+- Compare the failing check against each existing issue by ROOT CAUSE, not error message
+- A match means the same underlying problem, even with different error messages. Examples:
+  * Different HTTP errors from the same server (502, 503, ConnectionReset) = same cause
+  * Same test name failing with different timing or assertion = same cause
+  * Same CI job failing at the same build step = same cause
+  * Different tests failing due to the same infrastructure outage = same cause
+- Focus on: Which component/service failed? Which CI step? Which test area?
+- Do NOT require exact error message matches
 - If you find a match, respond with ONLY: MATCH <issue-number>
 - If no issue matches, respond with ONLY: NONE
 - Do NOT modify any files or run any commands`)
