@@ -1517,6 +1517,10 @@ func (a *Agent) hasUncommittedChanges(ctx context.Context, worktreePath string) 
 
 // gitAmendAll stages all changes and amends the current commit.
 func (a *Agent) gitAmendAll(ctx context.Context, worktreePath string) error {
+	if a.cfg.DryRun {
+		a.logger.Info("[dry-run] would amend commit", "worktree", worktreePath)
+		return nil
+	}
 	if _, stderr, err := a.runner.Run(ctx, worktreePath, "git", "add", "-A"); err != nil {
 		return fmt.Errorf("git add: %w (stderr: %s)", err, string(stderr))
 	}
@@ -1574,6 +1578,10 @@ func (a *Agent) deleteRemoteBranch(ctx context.Context, worktreePath, branchName
 
 // gitPush pushes the current branch to the push remote.
 func (a *Agent) gitPush(ctx context.Context, worktreePath string, force bool) error {
+	if a.cfg.DryRun {
+		a.logger.Info("[dry-run] would push", "worktree", worktreePath, "force", force)
+		return nil
+	}
 	pushRemote := a.pushRemote()
 
 	// Get the current branch name for the refspec

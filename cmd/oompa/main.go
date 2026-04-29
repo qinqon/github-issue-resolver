@@ -425,8 +425,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Wrap the GitHub client for dry-run mode (logs writes instead of executing)
+	var agentGH agent.GitHubClient = ghClient
+	if cfg.DryRun {
+		agentGH = agent.NewDryRunGitHubClient(ghClient, logger)
+	}
+
 	a := agent.NewAgent(
-		ghClient,
+		agentGH,
 		runner,
 		wtm,
 		state,
