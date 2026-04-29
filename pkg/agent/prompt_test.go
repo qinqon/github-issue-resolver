@@ -258,7 +258,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 	diff := "handler.go | 10 +++++++---\n"
 
 	// Test without signed-off-by
-	prompt := buildCIFixPrompt(work, failures, diff, commits, "")
+	prompt := buildCIFixPrompt(work, failures, diff, commits, "", false)
 
 	checks := []string{
 		"PR #100",
@@ -293,7 +293,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 	}
 
 	// With signed-off-by (multi-commit PR should include instruction)
-	prompt = buildCIFixPrompt(work, failures, diff, commits, "Test User <test@example.com>")
+	prompt = buildCIFixPrompt(work, failures, diff, commits, "Test User <test@example.com>", false)
 	if !strings.Contains(prompt, "Signed-off-by: Test User <test@example.com>") {
 		t.Error("prompt missing Signed-off-by when provided for multi-commit PR")
 	}
@@ -302,7 +302,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 	singleCommit := []Commit{
 		{SHA: "abc123def456", Subject: "Fix handler"},
 	}
-	prompt = buildCIFixPrompt(work, failures, diff, singleCommit, "Test User <test@example.com>")
+	prompt = buildCIFixPrompt(work, failures, diff, singleCommit, "Test User <test@example.com>", false)
 	if !strings.Contains(prompt, "Signed-off-by: Test User <test@example.com>") {
 		t.Error("prompt missing Signed-off-by for single-commit PR (amend rewrites commit)")
 	}

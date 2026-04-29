@@ -33,6 +33,7 @@ type Config struct {
 	Agent             string   // coding agent backend: "claudecode" or "opencode"
 	AgentModel        string   // model override for OpenCode (empty = default)
 	Version           string   // build version (commit SHA) for comment watermarks
+	SkipFix           bool     // when true, investigate and comment but never fix or push code changes
 
 	// GitHub App authentication (alternative to GITHUB_TOKEN)
 	GitHubAppID             int64

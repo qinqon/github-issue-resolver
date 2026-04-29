@@ -190,7 +190,7 @@ Do NOT commit, push, or amend — the agent handles that automatically.`, owner,
 	return prompt.String()
 }
 
-func buildCIFixPrompt(work IssueWork, failures []CheckRun, diff string, commits []Commit, signedOffBy string) string {
+func buildCIFixPrompt(work IssueWork, failures []CheckRun, diff string, commits []Commit, signedOffBy string, skipFix bool) string {
 	var prompt strings.Builder
 	fmt.Fprintf(&prompt, `CI is failing on PR #%d for issue #%d: %s
 
@@ -276,8 +276,20 @@ Instructions:
    - IMPORTANT: Do NOT mention the PR changes, the PR number, or what the PR modifies in your explanation.
      Focus ONLY on describing the infrastructure failure: what service/system was unavailable, what the error was.
 
-5. If RELATED, fix with verification:
-   - Prefer minimal, targeted fixes over broad refactoring — do not change more code than
+5. If RELATED:
+   `)
+
+	if skipFix {
+		prompt.WriteString(`   - Do NOT attempt to fix the code or modify any files
+   - Your output MUST start with the word RELATED followed by a detailed explanation
+     of what is failing and why it is caused by this PR's changes
+   - Include: the specific error, the specific code path, and what needs to change
+
+REMINDER: Your FINAL text output MUST start with either UNRELATED, INFRASTRUCTURE, or RELATED.
+This is how the automation determines what to do next. Any other format will
+cause your work to be discarded.`)
+	} else {
+		prompt.WriteString(`   - Prefer minimal, targeted fixes over broad refactoring — do not change more code than
      necessary. Fixing a CI failure does NOT mean also renaming variables, adding docstrings,
      or refactoring adjacent code. Touch only what caused the failure.
    - If the fix involves changing test expectations, confirm the new behavior is correct
@@ -294,13 +306,13 @@ Instructions:
      will be discarded.
    `)
 
-	signoff := ""
-	if signedOffBy != "" {
-		signoff = fmt.Sprintf("\n   - Add \"Signed-off-by: %s\" as a trailer in every commit message (do NOT use git commit -s, write it directly in the message)", signedOffBy)
-	}
+		signoff := ""
+		if signedOffBy != "" {
+			signoff = fmt.Sprintf("\n   - Add \"Signed-off-by: %s\" as a trailer in every commit message (do NOT use git commit -s, write it directly in the message)", signedOffBy)
+		}
 
-	if len(commits) > 1 {
-		prompt.WriteString(`   - IMPORTANT: This PR has multiple commits. You MUST identify which specific commit introduced the breaking change
+		if len(commits) > 1 {
+			prompt.WriteString(`   - IMPORTANT: This PR has multiple commits. You MUST identify which specific commit introduced the breaking change
    - After fixing the code, amend your fix into the commit that introduced the issue:
      git add <fixed-files>
      git commit --amend --no-edit
@@ -308,19 +320,20 @@ Instructions:
      git add <fixed-files>
      git commit --fixup <SHA-of-commit-that-introduced-issue>` + signoff + `
 `)
-	} else {
-		prompt.WriteString(`   - After fixing the code, amend your fix into the commit:
+		} else {
+			prompt.WriteString(`   - After fixing the code, amend your fix into the commit:
      git add <fixed-files>
      git commit --amend --no-edit` + signoff + `
 `)
-	}
+		}
 
-	prompt.WriteString(`
+		prompt.WriteString(`
 Do NOT push or rebase — the agent handles that automatically.
 
 REMINDER: Your FINAL text output MUST start with either UNRELATED, INFRASTRUCTURE, or RELATED.
 This is how the automation determines what to do next. Any other format will
 cause your work to be discarded.`)
+	}
 
 	return prompt.String()
 }

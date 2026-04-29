@@ -46,6 +46,7 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 	flag.StringVar(&cfg.LogLevel, "log-level", envOrDefault("OOMPA_LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 	flag.BoolVar(&cfg.DryRun, "dry-run", false, "Log what would be done without executing")
 	flag.BoolVar(&cfg.OneShot, "one-shot", false, "Run one cycle and exit")
+	flag.BoolVar(&cfg.SkipFix, "skip-fix", envOrDefault("OOMPA_SKIP_FIX", "") == "true", "Investigate CI failures and comment but do not fix or push code")
 	flag.StringVar(&cfg.SignedOffBy, "signed-off-by", os.Getenv("OOMPA_SIGNED_OFF_BY"), "Signed-off-by value for commits (e.g. \"Name <email>\")")
 
 	var reviewers string

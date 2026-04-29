@@ -676,7 +676,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 
 	// Parallel phase: Claude invocations and post-processing
 	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task ciTask) {
-		prompt := buildCIFixPrompt(*task.work, task.failures, task.diff, task.commits, a.cfg.SignedOffBy)
+		prompt := buildCIFixPrompt(*task.work, task.failures, task.diff, task.commits, a.cfg.SignedOffBy, a.cfg.SkipFix)
 		result, err := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, prompt, a.logger, true)
 		if err != nil {
 			a.logger.Error("agent failed to investigate CI", "pr", task.work.PRNumber, "error", err)
@@ -872,7 +872,23 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			return
 		}
 
-		// Claude said RELATED — check if there are fixup commits, amended commits, or uncommitted changes
+		// Claude said RELATED
+		if a.cfg.SkipFix {
+			// Skip-fix mode: just post the analysis, don't try to fix or push
+			a.logger.Info("CI failure is related (skip-fix mode, not pushing)", "pr", task.work.PRNumber)
+			idx := strings.Index(cleaned, "RELATED")
+			analysis := strings.TrimPrefix(cleaned[idx:], "RELATED")
+			analysis = strings.TrimSpace(analysis)
+			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+				fmt.Sprintf("CI check `%s` is failing on commit %s and appears related to this PR's changes.\n\n%s\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), analysis, ciMarker(task.headSHA, task.failures[0].Name))); err != nil {
+				a.logger.Error("failed to post CI analysis comment", "pr", task.work.PRNumber, "error", err)
+			}
+			task.work.LastCIStatus = "related-skip-fix"
+			task.work.LastCheckedCISHA = task.headSHA
+			return
+		}
+
+		// Check if there are fixup commits, amended commits, or uncommitted changes
 		pushed := false
 		hasFixupCommits := a.hasFixupCommits(ctx, task.work.WorktreePath)
 		hasUncommitted := a.hasUncommittedChanges(ctx, task.work.WorktreePath)
