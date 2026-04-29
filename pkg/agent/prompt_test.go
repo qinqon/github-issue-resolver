@@ -273,12 +273,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"INFRASTRUCTURE",
 		"Do NOT push",
 		// Investigation methodology
-		"ce-debug",
-		"skill tool",
-		"Triage",
-		"Investigate",
-		"Root Cause",
-		"causal chain",
+		"/ce-debug",
 		// Fix criteria
 		"Fix ONE thing at a time",
 		"shotgun debugging",
