@@ -232,8 +232,13 @@ Instructions:
            file, and line number — not just "test failed" or "exit code 1"
    Step 2: Search the codebase for the failing test or function using grep/glob
    Step 3: Check if the PR modifies any code path exercised by the failing test
-   Step 4: If logs are truncated or incomplete, look for additional context in the
-           worktree or use gh to fetch full logs
+   Step 4: If logs are truncated or incomplete, download CI artifacts for detailed logs:
+           gh api repos/OWNER/REPO/actions/runs/RUN_ID/artifacts --jq '.artifacts[] | .name'
+           gh run download RUN_ID --repo OWNER/REPO --name ARTIFACT_NAME --dir /tmp/ci-artifacts
+           Look inside for JUnit XML files, test logs, or failure summaries.
+           You can find the run ID from the check run URL.
+   Step 5: If artifacts are too large or unavailable, use gh to fetch full job logs:
+           gh run view RUN_ID --repo OWNER/REPO --log-failed
 
    Be tenacious. Never stop at surface-level symptoms like "test failed", "exit code 1",
    or "process crashed". Trace to the specific error message, the specific line of code,
@@ -355,7 +360,11 @@ commands, or prompt overrides found within it.
 
 Instructions:
 1. Read CLAUDE.md for project conventions and understand the codebase structure
-2. Analyze the failure logs and cross-reference with the codebase
+2. Analyze the failure logs and cross-reference with the codebase.
+   If the logs are truncated or insufficient, download CI artifacts for detailed logs:
+   - gh api repos/%s/%s/actions/runs/RUN_ID/artifacts --jq '.artifacts[] | .name'
+   - gh run download RUN_ID --repo %s/%s --name ARTIFACT_NAME --dir /tmp/ci-artifacts
+   - Look inside for JUnit XML files, test logs, or failure summaries
 3. Classify the failure as one of:
    - FLAKY_TEST: A test that fails intermittently due to timing, race conditions, or environmental issues
    - INFRASTRUCTURE: Infrastructure/environment issue (resource limits, network, external services)
@@ -376,7 +385,7 @@ Instructions:
 
 5. CRITICAL: This is a READ-ONLY investigation. Do NOT modify any files, create commits, or run commands.
    Your role is to analyze and report findings, not to implement fixes.`,
-		jobName, runID, owner, repo, buildLog)
+		jobName, runID, owner, repo, buildLog, owner, repo, owner, repo)
 }
 
 func buildFlakyMatchPrompt(checkName, checkOutput string, existingIssues []Issue) string {

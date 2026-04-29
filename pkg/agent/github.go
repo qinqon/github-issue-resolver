@@ -320,9 +320,11 @@ func (g *GoGitHubClient) GetCheckRunLog(ctx context.Context, owner, repo string,
 	}
 
 	log := string(data)
-	// Truncate to last 3000 chars to avoid huge prompts
-	if len(log) > 3000 {
-		log = "...(truncated)...\n" + log[len(log)-3000:]
+	// Truncate to last 50000 chars to keep enough context for investigation
+	// while avoiding excessively large prompts
+	const maxLogSize = 50000
+	if len(log) > maxLogSize {
+		log = "...(truncated)...\n" + log[len(log)-maxLogSize:]
 	}
 	return log, nil
 }
