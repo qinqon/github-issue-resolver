@@ -108,6 +108,7 @@ When using GitHub App auth, the agent pushes branches directly to the upstream r
 | `--fork` | `OOMPA_FORK` | — | Fork repo as `owner/repo` for pushing branches |
 | `--watch-prs` | `OOMPA_WATCH_PRS` | — | Comma-separated PR numbers to monitor (bypasses issue discovery) |
 | `--reactions` | `OOMPA_REACTIONS` | all | Comma-separated list: `reviews`, `ci`, `conflicts`, `rebase` |
+| `--skip-comment` | `OOMPA_SKIP_COMMENTS` | none | Comma-separated comment categories to suppress: `ci-unrelated`, `ci-infrastructure`, `ci-related`, `conflict`, `rebase`, `flaky`, `issue-in-progress` |
 | `--only-assigned` | `OOMPA_ONLY_ASSIGNED` | `false` | Only process issues assigned to the agent user |
 | `--create-flaky-issues` | `OOMPA_CREATE_FLAKY_ISSUES` | `false` | Create issues for unrelated CI failures (opt-in) |
 | `--flaky-label` | `OOMPA_FLAKY_LABEL` | `flaky-test` | Label to apply to flaky CI issues |

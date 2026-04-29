@@ -250,9 +250,11 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			if err := a.gh.AssignIssue(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number, a.cfg.GitHubUser); err != nil {
 				a.logger.Warn("failed to assign issue", "issue", issue.Number, "error", err)
 			}
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
-				fmt.Sprintf("Oompa is working on this issue. A PR will be created shortly.\n\n%s", a.botComment())); err != nil {
-				a.logger.Warn("failed to add in-progress comment", "issue", issue.Number, "error", err)
+			if !a.ShouldSkipComment("issue-in-progress") {
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, issue.Number,
+					fmt.Sprintf("Oompa is working on this issue. A PR will be created shortly.\n\n%s", a.botComment())); err != nil {
+					a.logger.Warn("failed to add in-progress comment", "issue", issue.Number, "error", err)
+				}
 			}
 		}
 
@@ -685,15 +687,26 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			// stripping any separator characters (e.g. "INFRASTRUCTURE: ..." or "INFRASTRUCTURE — ...").
 			idx := strings.Index(cleaned, "INFRASTRUCTURE")
 			explanation := strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(cleaned[idx:], "INFRASTRUCTURE"), " :—–-"))
-			comment := fmt.Sprintf("CI check `%s` failed on commit %s due to an infrastructure issue (not a flaky test).", task.failures[0].Name, shortSHA(task.headSHA))
-			if explanation != "" {
-				comment += "\n\n" + explanation
-			}
-			comment += "\n\n" + ciMarker(task.headSHA, task.failures[0].Name)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
-				a.logger.Error("failed to post CI infrastructure comment", "pr", task.work.PRNumber, "error", err)
-				task.work.LastCIStatus = "investigation-inconclusive"
-				return
+			marker := ciMarker(task.headSHA, task.failures[0].Name)
+			if a.ShouldSkipComment("ci-infrastructure") {
+				a.logger.Info("skipping CI infrastructure comment (--skip-comment)", "pr", task.work.PRNumber)
+				// Post marker-only to prevent duplicate processing
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
+					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
+					task.work.LastCIStatus = "investigation-inconclusive"
+					return
+				}
+			} else {
+				comment := fmt.Sprintf("CI check `%s` failed on commit %s due to an infrastructure issue (not a flaky test).", task.failures[0].Name, shortSHA(task.headSHA))
+				if explanation != "" {
+					comment += "\n\n" + explanation
+				}
+				comment += "\n\n" + marker
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
+					a.logger.Error("failed to post CI infrastructure comment", "pr", task.work.PRNumber, "error", err)
+					task.work.LastCIStatus = "investigation-inconclusive"
+					return
+				}
 			}
 			task.work.LastCIStatus = "infrastructure-failure"
 			task.work.LastCheckedCISHA = task.headSHA
@@ -707,15 +720,26 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			// stripping any separator characters (e.g. "UNRELATED: ..." or "UNRELATED — ...").
 			idx := strings.Index(cleaned, "UNRELATED")
 			explanation := strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(cleaned[idx:], "UNRELATED"), " :—–-"))
-			comment := fmt.Sprintf("CI check `%s` failed on commit %s but appears unrelated to this PR's changes.", task.failures[0].Name, shortSHA(task.headSHA))
-			if explanation != "" {
-				comment += "\n\n" + explanation
-			}
-			comment += "\n\n" + ciMarker(task.headSHA, task.failures[0].Name)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
-				a.logger.Error("failed to post CI unrelated comment", "pr", task.work.PRNumber, "error", err)
-				task.work.LastCIStatus = "investigation-inconclusive"
-				return
+			marker := ciMarker(task.headSHA, task.failures[0].Name)
+			if a.ShouldSkipComment("ci-unrelated") {
+				a.logger.Info("skipping CI unrelated comment (--skip-comment)", "pr", task.work.PRNumber)
+				// Post marker-only to prevent duplicate processing
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
+					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
+					task.work.LastCIStatus = "investigation-inconclusive"
+					return
+				}
+			} else {
+				comment := fmt.Sprintf("CI check `%s` failed on commit %s but appears unrelated to this PR's changes.", task.failures[0].Name, shortSHA(task.headSHA))
+				if explanation != "" {
+					comment += "\n\n" + explanation
+				}
+				comment += "\n\n" + marker
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, comment); err != nil {
+					a.logger.Error("failed to post CI unrelated comment", "pr", task.work.PRNumber, "error", err)
+					task.work.LastCIStatus = "investigation-inconclusive"
+					return
+				}
 			}
 			task.work.LastCIStatus = "unrelated-failure"
 			task.work.LastCheckedCISHA = task.headSHA
@@ -790,9 +814,11 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 					}
 
 					if issueNum > 0 {
-						if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-							fmt.Sprintf("This appears to be a duplicate of existing flaky test issue #%d.\n\n%s", issueNum, a.botComment())); err != nil {
-							a.logger.Error("failed to post existing flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+						if !a.ShouldSkipComment("flaky") {
+							if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+								fmt.Sprintf("This appears to be a duplicate of existing flaky test issue #%d.\n\n%s", issueNum, a.botComment())); err != nil {
+								a.logger.Error("failed to post existing flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+							}
 						}
 						return
 					}
@@ -819,9 +845,11 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 					a.logger.Error("failed to create flaky CI issue", "error", err)
 				} else {
 					a.logger.Info("created flaky CI issue", "issue", issueNum)
-					if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-						fmt.Sprintf("Opened issue #%d to track this flaky test.\n\n%s", issueNum, a.botComment())); err != nil {
-						a.logger.Error("failed to post flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+					if !a.ShouldSkipComment("flaky") {
+						if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+							fmt.Sprintf("Opened issue #%d to track this flaky test.\n\n%s", issueNum, a.botComment())); err != nil {
+							a.logger.Error("failed to post flaky issue reference comment", "pr", task.work.PRNumber, "error", err)
+						}
 					}
 				}
 			}
@@ -836,9 +864,17 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			idx := strings.Index(cleaned, "RELATED")
 			analysis := strings.TrimPrefix(cleaned[idx:], "RELATED")
 			analysis = strings.TrimSpace(analysis)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("CI check `%s` is failing on commit %s and appears related to this PR's changes.\n\n%s\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), analysis, ciMarker(task.headSHA, task.failures[0].Name))); err != nil {
-				a.logger.Error("failed to post CI analysis comment", "pr", task.work.PRNumber, "error", err)
+			marker := ciMarker(task.headSHA, task.failures[0].Name)
+			if a.ShouldSkipComment("ci-related") {
+				a.logger.Info("skipping CI related comment (--skip-comment)", "pr", task.work.PRNumber)
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
+					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
+				}
+			} else {
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+					fmt.Sprintf("CI check `%s` is failing on commit %s and appears related to this PR's changes.\n\n%s\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), analysis, marker)); err != nil {
+					a.logger.Error("failed to post CI analysis comment", "pr", task.work.PRNumber, "error", err)
+				}
 			}
 			task.work.LastCIStatus = "related-skip-fix"
 			task.work.LastCheckedCISHA = task.headSHA
@@ -896,17 +932,32 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			}
 		}
 
+		marker := ciMarker(task.headSHA, task.failures[0].Name)
 		if pushed {
 			a.logger.Info("CI failure is related, pushed a fix", "pr", task.work.PRNumber)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("CI check `%s` was failing on commit %s. Pushed a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), ciMarker(task.headSHA, task.failures[0].Name))); err != nil {
-				a.logger.Error("failed to post CI fix comment", "pr", task.work.PRNumber, "error", err)
+			if a.ShouldSkipComment("ci-related") {
+				a.logger.Info("skipping CI fix-pushed comment (--skip-comment)", "pr", task.work.PRNumber)
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
+					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
+				}
+			} else {
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+					fmt.Sprintf("CI check `%s` was failing on commit %s. Pushed a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), marker)); err != nil {
+					a.logger.Error("failed to post CI fix comment", "pr", task.work.PRNumber, "error", err)
+				}
 			}
 		} else {
 			a.logger.Warn("Claude said RELATED but no changes to push", "pr", task.work.PRNumber)
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("CI check `%s` is failing on commit %s. Investigated but could not push a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), ciMarker(task.headSHA, task.failures[0].Name))); err != nil {
-				a.logger.Error("failed to post CI investigation comment", "pr", task.work.PRNumber, "error", err)
+			if a.ShouldSkipComment("ci-related") {
+				a.logger.Info("skipping CI fix-failed comment (--skip-comment)", "pr", task.work.PRNumber)
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
+					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
+				}
+			} else {
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+					fmt.Sprintf("CI check `%s` is failing on commit %s. Investigated but could not push a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), marker)); err != nil {
+					a.logger.Error("failed to post CI investigation comment", "pr", task.work.PRNumber, "error", err)
+				}
 			}
 		}
 		task.work.CIFixAttempts++
@@ -963,8 +1014,10 @@ func (a *Agent) ProcessConflicts(ctx context.Context) {
 				a.logger.Error("failed to push after rebase", "pr", work.PRNumber, "error", pushErr)
 			} else {
 				a.logger.Info("rebased and pushed successfully", "pr", work.PRNumber)
-				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-					fmt.Sprintf("Rebased commit %s on main and pushed.\n\n%s", shortSHA(headSHA), a.botComment()))
+				if !a.ShouldSkipComment("conflict") {
+					_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+						fmt.Sprintf("Rebased commit %s on main and pushed.\n\n%s", shortSHA(headSHA), a.botComment()))
+				}
 			}
 			continue
 		}
@@ -1059,8 +1112,10 @@ func (a *Agent) ProcessRebase(ctx context.Context) {
 			a.logger.Error("failed to push after rebase", "pr", work.PRNumber, "error", pushErr)
 		} else {
 			a.logger.Info("rebased and pushed successfully", "pr", work.PRNumber)
-			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
-				fmt.Sprintf("Rebased commit %s on main and pushed.\n\n%s", shortSHA(headSHA), a.botComment()))
+			if !a.ShouldSkipComment("rebase") {
+				_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, work.PRNumber,
+					fmt.Sprintf("Rebased commit %s on main and pushed.\n\n%s", shortSHA(headSHA), a.botComment()))
+			}
 		}
 	}
 
@@ -1288,6 +1343,14 @@ func (a *Agent) ShouldRunReaction(reaction string) bool {
 		return true
 	}
 	return slices.Contains(a.cfg.Reactions, reaction)
+}
+
+// ShouldSkipComment returns true if the given comment category should be suppressed.
+// When a category is skipped, oompa still performs the underlying work but does not
+// post the human-visible GitHub comment. Deduplication marker comments are never skipped.
+// Valid categories: "ci-unrelated", "ci-infrastructure", "ci-related", "conflict", "rebase", "flaky", "issue-in-progress".
+func (a *Agent) ShouldSkipComment(category string) bool {
+	return slices.Contains(a.cfg.SkipComments, category)
 }
 
 // BootstrapWatchedPRs creates IssueWork entries for directly-specified PR numbers.
@@ -1684,9 +1747,11 @@ func (a *Agent) resolveConflictsParallel(ctx context.Context, tasks []conflictTa
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 				fmt.Sprintf("<!-- oompa-bot rebase:%s -->", shortSHA(task.headSHA)))
 		} else {
-			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-				fmt.Sprintf("Rebased commit %s on main and pushed (conflicts resolved).\n\n%s", shortSHA(task.headSHA), a.botComment())); err != nil {
-				a.logger.Error("failed to log success to github", "pr", task.work.PRNumber, "error", err)
+			if !a.ShouldSkipComment("conflict") {
+				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+					fmt.Sprintf("Rebased commit %s on main and pushed (conflicts resolved).\n\n%s", shortSHA(task.headSHA), a.botComment())); err != nil {
+					a.logger.Error("failed to log success to github", "pr", task.work.PRNumber, "error", err)
+				}
 			}
 		}
 	})

@@ -58,6 +58,9 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 	var reactions string
 	flag.StringVar(&reactions, "reactions", os.Getenv("OOMPA_REACTIONS"), "Comma-separated list of reactions to run: reviews, ci, conflicts, rebase (empty = all)")
 
+	var skipComments string
+	flag.StringVar(&skipComments, "skip-comment", os.Getenv("OOMPA_SKIP_COMMENTS"), "Comma-separated list of comment categories to suppress: ci-unrelated, ci-infrastructure, ci-related, conflict, rebase, flaky, issue-in-progress")
+
 	var triageJobs string
 	flag.StringVar(&triageJobs, "triage-jobs", os.Getenv("OOMPA_TRIAGE_JOBS"), "Comma-separated CI job URLs to monitor for periodic job triage")
 	triageLookback := time.Duration(0)
@@ -186,6 +189,29 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 				os.Exit(1)
 			}
 			cfg.Reactions = append(cfg.Reactions, r)
+		}
+	}
+
+	if skipComments != "" {
+		validComments := map[string]bool{
+			"ci-unrelated":      true,
+			"ci-infrastructure": true,
+			"ci-related":        true,
+			"conflict":          true,
+			"rebase":            true,
+			"flaky":             true,
+			"issue-in-progress": true,
+		}
+		for c := range strings.SplitSeq(skipComments, ",") {
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
+			}
+			if !validComments[c] {
+				fmt.Fprintf(os.Stderr, "invalid comment category %q: valid values are ci-unrelated, ci-infrastructure, ci-related, conflict, rebase, flaky, issue-in-progress\n", c)
+				os.Exit(1)
+			}
+			cfg.SkipComments = append(cfg.SkipComments, c)
 		}
 	}
 

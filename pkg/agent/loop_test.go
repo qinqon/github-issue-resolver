@@ -326,6 +326,31 @@ func TestProcessNewIssues_HappyPath(t *testing.T) {
 	}
 }
 
+func TestProcessNewIssues_SkipCommentIssueInProgress(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "Fixed it"})
+	gh := &mockGitHubClient{
+		issues: []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"issue-in-progress"}
+	agent.ProcessNewIssues(context.Background())
+
+	// Should still create worktree and process the issue
+	if len(wt.createdBranches) != 1 || wt.createdBranches[0] != "ai/issue-42" {
+		t.Errorf("expected branch 'ai/issue-42', got %v", wt.createdBranches)
+	}
+
+	// No "working on this issue" comment should be posted
+	for _, comment := range gh.addedComments {
+		if strings.Contains(comment, "working on this issue") {
+			t.Errorf("expected issue-in-progress comment to be suppressed, got: %q", comment)
+		}
+	}
+}
+
 func TestProcessNewIssues_SkipsWhenPRExists(t *testing.T) {
 	gh := &mockGitHubClient{
 		issues: []Issue{{Number: 42, Title: "Fix bug", Body: "broken"}},
@@ -856,6 +881,177 @@ func TestProcessCIFailures_SkipsFlakyIssueWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestProcessCIFailures_SkipCommentCIUnrelated(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"ci-unrelated"}
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Should post only the marker comment, not the human-visible comment
+	if len(gh.addedComments) != 1 {
+		t.Fatalf("expected 1 comment (marker only), got %d", len(gh.addedComments))
+	}
+	if !strings.Contains(gh.addedComments[0], "<!-- oompa-bot ci:") {
+		t.Errorf("expected marker comment, got: %q", gh.addedComments[0])
+	}
+	if strings.Contains(gh.addedComments[0], "appears unrelated") {
+		t.Error("expected human-visible text to be suppressed")
+	}
+
+	// State should still be updated
+	work := agent.state.ActiveIssues[42]
+	if work.LastCIStatus != "unrelated-failure" {
+		t.Errorf("expected LastCIStatus 'unrelated-failure', got %q", work.LastCIStatus)
+	}
+}
+
+func TestProcessCIFailures_SkipCommentCIUnrelated_StillCreatesFlakyIssue(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"ci-unrelated"}
+	agent.cfg.CreateFlakyIssues = true
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Flaky issue should still be created even though ci-unrelated comment is skipped
+	if len(gh.createdIssues) != 1 {
+		t.Fatalf("expected 1 created flaky issue, got %d", len(gh.createdIssues))
+	}
+
+	// Should have marker comment + flaky issue reference comment
+	if len(gh.addedComments) != 2 {
+		t.Fatalf("expected 2 comments (marker + flaky issue ref), got %d", len(gh.addedComments))
+	}
+	// First comment should be marker-only (suppressed ci-unrelated)
+	if strings.Contains(gh.addedComments[0], "appears unrelated") {
+		t.Error("expected first comment to be marker-only (ci-unrelated suppressed)")
+	}
+}
+
+func TestProcessCIFailures_SkipCommentCIInfrastructure(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "INFRASTRUCTURE Fedora koji server returned HTTP 502 Bad Gateway"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "Build-PR", Status: "completed", Conclusion: "failure", Output: "HTTP 502 Bad Gateway from koji.fedoraproject.org"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Building package...\nFetching from koji.fedoraproject.org...\nHTTP 502 Bad Gateway\nBuild failed",
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"ci-infrastructure"}
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Should post only marker comment
+	if len(gh.addedComments) != 1 {
+		t.Fatalf("expected 1 comment (marker only), got %d", len(gh.addedComments))
+	}
+	if strings.Contains(gh.addedComments[0], "infrastructure issue") {
+		t.Error("expected human-visible text to be suppressed")
+	}
+	if !strings.Contains(gh.addedComments[0], "<!-- oompa-bot ci:") {
+		t.Errorf("expected marker comment, got: %q", gh.addedComments[0])
+	}
+
+	// State should still be updated
+	work := agent.state.ActiveIssues[42]
+	if work.LastCIStatus != "infrastructure-failure" {
+		t.Errorf("expected LastCIStatus 'infrastructure-failure', got %q", work.LastCIStatus)
+	}
+}
+
+func TestProcessCIFailures_SkipCommentFlaky(t *testing.T) {
+	claudeResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
+	gh := &mockGitHubClient{
+		checkRuns: []CheckRun{
+			{ID: 1, Name: "integration-tests", Status: "completed", Conclusion: "failure", Output: "Error: connection timeout"},
+		},
+		checkRunLogs: map[int64]string{
+			1: "Starting integration tests...\nConnecting to database...\nError: connection timeout after 30s\nStack trace:\n  at TestDB.connect(db.go:42)\n  at TestSuite.setUp(suite.go:15)",
+		},
+	}
+	runner := &mockCommandRunner{stdout: claudeResult}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"flaky"}
+	agent.cfg.CreateFlakyIssues = true
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		IssueTitle:   "Fix bug",
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessCIFailures(context.Background())
+
+	// Flaky issue should still be created
+	if len(gh.createdIssues) != 1 {
+		t.Fatalf("expected 1 created flaky issue, got %d", len(gh.createdIssues))
+	}
+
+	// Should have only the unrelated comment (not the "Opened issue #N" cross-reference)
+	if len(gh.addedComments) != 1 {
+		t.Fatalf("expected 1 comment (unrelated notice only, flaky ref suppressed), got %d", len(gh.addedComments))
+	}
+	if !strings.Contains(gh.addedComments[0], "appears unrelated") {
+		t.Errorf("expected unrelated comment, got: %q", gh.addedComments[0])
+	}
+}
+
 func TestProcessCIFailures_SkipsDuplicateFlakyIssue(t *testing.T) {
 	ciResult := streamResultJSON(AgentResult{Result: "UNRELATED The test database connection times out intermittently"})
 	matchResult := streamResultJSON(AgentResult{Result: "MATCH 50"})
@@ -1273,6 +1469,34 @@ func TestShouldRunReaction_Filtered(t *testing.T) {
 	}
 }
 
+func TestShouldSkipComment_EmptySkipsNone(t *testing.T) {
+	agent := newTestAgent(&mockGitHubClient{}, &mockCommandRunner{}, &mockWorktreeManager{})
+	// No skip comments configured — nothing should be skipped
+	for _, category := range []string{"ci-unrelated", "ci-infrastructure", "ci-related", "conflict", "rebase", "flaky", "issue-in-progress"} {
+		if agent.ShouldSkipComment(category) {
+			t.Errorf("expected %q to NOT be skipped with empty SkipComments", category)
+		}
+	}
+}
+
+func TestShouldSkipComment_Filtered(t *testing.T) {
+	agent := newTestAgent(&mockGitHubClient{}, &mockCommandRunner{}, &mockWorktreeManager{})
+	agent.cfg.SkipComments = []string{"ci-unrelated", "ci-infrastructure"}
+
+	if !agent.ShouldSkipComment("ci-unrelated") {
+		t.Error("expected 'ci-unrelated' to be skipped")
+	}
+	if !agent.ShouldSkipComment("ci-infrastructure") {
+		t.Error("expected 'ci-infrastructure' to be skipped")
+	}
+	if agent.ShouldSkipComment("ci-related") {
+		t.Error("expected 'ci-related' to NOT be skipped")
+	}
+	if agent.ShouldSkipComment("conflict") {
+		t.Error("expected 'conflict' to NOT be skipped")
+	}
+}
+
 func TestBootstrapWatchedPRs_HappyPath(t *testing.T) {
 	gh := &mockGitHubClient{
 		prs: []PR{
@@ -1639,6 +1863,69 @@ func TestProcessConflicts_SkipsCleanPR(t *testing.T) {
 	for _, c := range runner.calls {
 		if c.Name == "git" {
 			t.Errorf("should not run git commands for clean PR, got: git %v", c.Args)
+		}
+	}
+}
+
+func TestProcessRebase_SkipCommentRebase(t *testing.T) {
+	gh := &mockGitHubClient{
+		mergeableState: "behind",
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"rebase"}
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessRebase(context.Background())
+
+	// Should have attempted rebase (git fetch + git rebase)
+	var rebaseCalls int
+	for _, c := range runner.calls {
+		if c.Name == "git" && len(c.Args) > 0 && c.Args[0] == "rebase" {
+			rebaseCalls++
+		}
+	}
+	if rebaseCalls == 0 {
+		t.Error("expected git rebase to be called")
+	}
+
+	// No comment should be posted (rebase comment skipped)
+	if len(gh.addedComments) != 0 {
+		t.Errorf("expected 0 comments (rebase comment suppressed), got %d: %v", len(gh.addedComments), gh.addedComments)
+	}
+}
+
+func TestProcessConflicts_SkipCommentConflict(t *testing.T) {
+	gh := &mockGitHubClient{
+		mergeableState: "dirty",
+	}
+	runner := &mockCommandRunner{}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.cfg.SkipComments = []string{"conflict"}
+	agent.state.ActiveIssues[42] = &IssueWork{
+		IssueNumber:  42,
+		PRNumber:     100,
+		BranchName:   "ai/issue-42",
+		Status:       "pr-open",
+		WorktreePath: "/tmp/worktree",
+	}
+
+	agent.ProcessConflicts(context.Background())
+
+	// No human-visible comment should be posted
+	for _, comment := range gh.addedComments {
+		if strings.Contains(comment, "Rebased commit") && !strings.Contains(comment, "<!--") {
+			t.Errorf("expected conflict comment to be suppressed, got: %q", comment)
 		}
 	}
 }
