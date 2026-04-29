@@ -690,12 +690,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			marker := ciMarker(task.headSHA, task.failures[0].Name)
 			if a.ShouldSkipComment("ci-infrastructure") {
 				a.logger.Info("skipping CI infrastructure comment (--skip-comment)", "pr", task.work.PRNumber)
-				// Post marker-only to prevent duplicate processing
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
-					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
-					task.work.LastCIStatus = "investigation-inconclusive"
-					return
-				}
+				a.markCIChecked(task.work, task.headSHA, task.failures[0].Name)
 			} else {
 				comment := fmt.Sprintf("CI check `%s` failed on commit %s due to an infrastructure issue (not a flaky test).", task.failures[0].Name, shortSHA(task.headSHA))
 				if explanation != "" {
@@ -723,12 +718,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			marker := ciMarker(task.headSHA, task.failures[0].Name)
 			if a.ShouldSkipComment("ci-unrelated") {
 				a.logger.Info("skipping CI unrelated comment (--skip-comment)", "pr", task.work.PRNumber)
-				// Post marker-only to prevent duplicate processing
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
-					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
-					task.work.LastCIStatus = "investigation-inconclusive"
-					return
-				}
+				a.markCIChecked(task.work, task.headSHA, task.failures[0].Name)
 			} else {
 				comment := fmt.Sprintf("CI check `%s` failed on commit %s but appears unrelated to this PR's changes.", task.failures[0].Name, shortSHA(task.headSHA))
 				if explanation != "" {
@@ -889,9 +879,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			marker := ciMarker(task.headSHA, task.failures[0].Name)
 			if a.ShouldSkipComment("ci-related") {
 				a.logger.Info("skipping CI related comment (--skip-comment)", "pr", task.work.PRNumber)
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
-					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
-				}
+				a.markCIChecked(task.work, task.headSHA, task.failures[0].Name)
 			} else {
 				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 					fmt.Sprintf("CI check `%s` is failing on commit %s and appears related to this PR's changes.\n\n%s\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), analysis, marker)); err != nil {
@@ -959,9 +947,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Info("CI failure is related, pushed a fix", "pr", task.work.PRNumber)
 			if a.ShouldSkipComment("ci-related") {
 				a.logger.Info("skipping CI fix-pushed comment (--skip-comment)", "pr", task.work.PRNumber)
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
-					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
-				}
+				a.markCIChecked(task.work, task.headSHA, task.failures[0].Name)
 			} else {
 				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 					fmt.Sprintf("CI check `%s` was failing on commit %s. Pushed a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), marker)); err != nil {
@@ -972,9 +958,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 			a.logger.Warn("Claude said RELATED but no changes to push", "pr", task.work.PRNumber)
 			if a.ShouldSkipComment("ci-related") {
 				a.logger.Info("skipping CI fix-failed comment (--skip-comment)", "pr", task.work.PRNumber)
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, marker); err != nil {
-					a.logger.Error("failed to post CI marker comment", "pr", task.work.PRNumber, "error", err)
-				}
+				a.markCIChecked(task.work, task.headSHA, task.failures[0].Name)
 			} else {
 				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 					fmt.Sprintf("CI check `%s` is failing on commit %s. Investigated but could not push a fix.\n\n%s", task.failures[0].Name, shortSHA(task.headSHA), marker)); err != nil {
@@ -1473,6 +1457,15 @@ func shortSHA(sha string) string {
 }
 
 func (a *Agent) alreadyCheckedCI(ctx context.Context, prNumber int, sha, checkName string) bool {
+	// Check in-memory state first (used when comments are skipped)
+	key := sha + ":" + checkName
+	for _, work := range a.state.ActiveIssues {
+		if work.PRNumber == prNumber && work.CheckedCIChecks[key] {
+			return true
+		}
+	}
+
+	// Fall back to checking comment markers (used when comments are posted)
 	comments, err := a.gh.GetIssueComments(ctx, a.cfg.Owner, a.cfg.Repo, prNumber, 0)
 	if err != nil {
 		return false
@@ -1484,6 +1477,14 @@ func (a *Agent) alreadyCheckedCI(ctx context.Context, prNumber int, sha, checkNa
 		}
 	}
 	return false
+}
+
+// markCIChecked records that a CI check has been investigated for dedup purposes.
+func (a *Agent) markCIChecked(work *IssueWork, sha, checkName string) {
+	if work.CheckedCIChecks == nil {
+		work.CheckedCIChecks = make(map[string]bool)
+	}
+	work.CheckedCIChecks[sha+":"+checkName] = true
 }
 
 // originDefaultBranch returns "origin/<default-branch>" (e.g. "origin/main", "origin/master").

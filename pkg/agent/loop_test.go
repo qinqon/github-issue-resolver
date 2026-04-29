@@ -915,21 +915,19 @@ func TestProcessCIFailures_SkipCommentCIUnrelated(t *testing.T) {
 
 	agent.ProcessCIFailures(context.Background())
 
-	// Should post only the marker comment, not the human-visible comment
-	if len(gh.addedComments) != 1 {
-		t.Fatalf("expected 1 comment (marker only), got %d", len(gh.addedComments))
-	}
-	if !strings.Contains(gh.addedComments[0], "<!-- oompa-bot ci:") {
-		t.Errorf("expected marker comment, got: %q", gh.addedComments[0])
-	}
-	if strings.Contains(gh.addedComments[0], "appears unrelated") {
-		t.Error("expected human-visible text to be suppressed")
+	// No comments should be posted (comment skipped, dedup via state)
+	if len(gh.addedComments) != 0 {
+		t.Fatalf("expected 0 comments (ci-unrelated skipped), got %d: %v", len(gh.addedComments), gh.addedComments)
 	}
 
 	// State should still be updated
 	work := agent.state.ActiveIssues[42]
 	if work.LastCIStatus != "unrelated-failure" {
 		t.Errorf("expected LastCIStatus 'unrelated-failure', got %q", work.LastCIStatus)
+	}
+	// Check should be recorded in state for dedup
+	if !work.CheckedCIChecks["abc123:integration-tests"] {
+		t.Error("expected check to be recorded in CheckedCIChecks for dedup")
 	}
 }
 
@@ -965,13 +963,12 @@ func TestProcessCIFailures_SkipCommentCIUnrelated_StillCreatesFlakyIssue(t *test
 		t.Fatalf("expected 1 created flaky issue, got %d", len(gh.createdIssues))
 	}
 
-	// Should have marker comment + flaky issue reference comment
-	if len(gh.addedComments) != 2 {
-		t.Fatalf("expected 2 comments (marker + flaky issue ref), got %d", len(gh.addedComments))
+	// Should have only flaky issue reference comment (no marker, no unrelated comment)
+	if len(gh.addedComments) != 1 {
+		t.Fatalf("expected 1 comment (flaky issue ref only), got %d", len(gh.addedComments))
 	}
-	// First comment should be marker-only (suppressed ci-unrelated)
-	if strings.Contains(gh.addedComments[0], "appears unrelated") {
-		t.Error("expected first comment to be marker-only (ci-unrelated suppressed)")
+	if !strings.Contains(gh.addedComments[0], "Opened issue") {
+		t.Errorf("expected flaky issue reference comment, got: %q", gh.addedComments[0])
 	}
 }
 
@@ -1001,21 +998,19 @@ func TestProcessCIFailures_SkipCommentCIInfrastructure(t *testing.T) {
 
 	agent.ProcessCIFailures(context.Background())
 
-	// Should post only marker comment
-	if len(gh.addedComments) != 1 {
-		t.Fatalf("expected 1 comment (marker only), got %d", len(gh.addedComments))
-	}
-	if strings.Contains(gh.addedComments[0], "infrastructure issue") {
-		t.Error("expected human-visible text to be suppressed")
-	}
-	if !strings.Contains(gh.addedComments[0], "<!-- oompa-bot ci:") {
-		t.Errorf("expected marker comment, got: %q", gh.addedComments[0])
+	// No comments should be posted
+	if len(gh.addedComments) != 0 {
+		t.Fatalf("expected 0 comments (ci-infrastructure skipped), got %d: %v", len(gh.addedComments), gh.addedComments)
 	}
 
 	// State should still be updated
 	work := agent.state.ActiveIssues[42]
 	if work.LastCIStatus != "infrastructure-failure" {
 		t.Errorf("expected LastCIStatus 'infrastructure-failure', got %q", work.LastCIStatus)
+	}
+	// Check should be recorded in state for dedup
+	if !work.CheckedCIChecks["abc123:Build-PR"] {
+		t.Error("expected check to be recorded in CheckedCIChecks for dedup")
 	}
 }
 

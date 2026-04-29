@@ -53,9 +53,10 @@ type IssueWork struct {
 	LastReviewID     int64     `json:"lastReviewID"`
 	Status           string    `json:"status"` // implementing, pr-open, failed, done
 	CIFixAttempts    int       `json:"ciFixAttempts"`
-	LastCIStatus     string    `json:"lastCIStatus"`     // "", "pending", "success", "failure"
-	LastCheckedCISHA string    `json:"lastCheckedCISHA"` // last commit SHA investigated for CI failures
-	CreatedAt        time.Time `json:"createdAt"`
+	LastCIStatus     string            `json:"lastCIStatus"`     // "", "pending", "success", "failure"
+	LastCheckedCISHA string            `json:"lastCheckedCISHA"` // last commit SHA investigated for CI failures
+	CheckedCIChecks  map[string]bool   `json:"checkedCIChecks,omitempty"` // tracks "sha:check" keys investigated (for dedup without comments)
+	CreatedAt        time.Time         `json:"createdAt"`
 }
 
 // PRReview represents a GitHub pull request review (approve, request changes, comment).
