@@ -28,7 +28,8 @@ type Config struct {
 	FlakyLabel        string   // label applied to flaky CI issues (default: "flaky-test")
 	OnlyAssigned      bool     // when true, only process issues assigned to the agent user
 	MaxWorkers        int      // maximum concurrent Claude invocations (1 = sequential, default)
-	TriageJobs        []string // CI job URLs to monitor for periodic job triage
+	TriageJobs        []string       // CI job URLs to monitor for periodic job triage
+	TriageLookback    time.Duration  // time window to check for failed triage runs (0 = latest only)
 	Agent             string   // coding agent backend: "claudecode" or "opencode"
 	AgentModel        string   // model override for OpenCode (empty = default)
 	Version           string   // build version (commit SHA) for comment watermarks

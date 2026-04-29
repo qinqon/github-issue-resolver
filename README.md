@@ -109,6 +109,7 @@ When using GitHub App auth, the agent pushes branches directly to the upstream r
 | `--create-flaky-issues` | `OOMPA_CREATE_FLAKY_ISSUES` | `false` | Create issues for unrelated CI failures (opt-in) |
 | `--flaky-label` | `OOMPA_FLAKY_LABEL` | `flaky-test` | Label to apply to flaky CI issues |
 | `--triage-jobs` | `OOMPA_TRIAGE_JOBS` | — | Comma-separated CI job URLs to monitor for periodic job triage |
+| `--triage-lookback` | `OOMPA_TRIAGE_LOOKBACK` | `0` (latest only) | Time window to check for failed triage runs (e.g. `24h`, `12h`) |
 | `--max-workers` | `OOMPA_MAX_WORKERS` | `1` | Maximum parallel agent invocations |
 | `--exit-on-new-version` | `OOMPA_EXIT_ON_NEW_VERSION` | — | Exit when a new release is available (`owner/repo`) |
 | `--dry-run` | — | `false` | Log actions without executing them |

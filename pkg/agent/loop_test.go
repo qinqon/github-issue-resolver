@@ -1800,45 +1800,71 @@ func TestProcessTriageJobs_NoJobsConfigured(t *testing.T) {
 }
 
 func TestProcessTriageJobs_SkipsAlreadyInvestigated(t *testing.T) {
-	gh := &mockGitHubClient{}
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 100, Status: "completed", Conclusion: "failure", CreatedAt: time.Now()},
+		},
+	}
 	runner := &mockCommandRunner{}
 	wtm := &mockWorktreeManager{}
 	state := NewState()
 
-	// Mark run as already investigated
-	state.MarkRunInvestigated("periodic-knmstate-e2e-handler-k8s-latest", "1234567890")
+	// Pre-mark run as already investigated
+	state.MarkRunInvestigated("owner/repo/ci.yml", "100")
 
 	cfg := Config{
-		Owner:      "nmstate",
-		Repo:       "kubernetes-nmstate",
-		TriageJobs: []string{"https://prow.ci.kubevirt.io/view/gs/kubevirt-prow/logs/periodic-knmstate-e2e-handler-k8s-latest/"},
+		Owner:      "owner",
+		Repo:       "repo",
+		TriageJobs: []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
 	}
 
-	NewAgent(gh, runner, wtm, state, cfg, slog.Default(), &ClaudeCodeAgent{})
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), &ClaudeCodeAgent{})
+	a.ProcessTriageJobs(context.Background())
 
-	// Note: This test would need a real HTTP server to mock GCS API responses
-	// For now, we test the state checking logic directly
-	if !state.IsRunInvestigated("periodic-knmstate-e2e-handler-k8s-latest", "1234567890") {
-		t.Error("expected run to be marked as investigated")
+	// Should still be marked as investigated
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "100") {
+		t.Error("expected run to remain marked as investigated")
+	}
+	// Should not create any worktrees (no investigation triggered)
+	if len(wtm.createdBranches) > 0 {
+		t.Errorf("expected no worktrees created for already-investigated run, got %d", len(wtm.createdBranches))
+	}
+	// Should not have created any issues
+	if len(gh.createdIssues) > 0 {
+		t.Errorf("expected no issues created, got %d", len(gh.createdIssues))
 	}
 }
 
 func TestProcessTriageJobs_SkipsSuccessfulRuns(t *testing.T) {
-	// This test verifies the logic in ProcessTriageJobs that skips successful runs
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 200, Status: "completed", Conclusion: "success", CreatedAt: time.Now()},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wtm := &mockWorktreeManager{}
 	state := NewState()
 
-	// Simulate a successful run
-	jobName := "test-job"
-	runID := "success-run"
-	status := "success"
-
-	// The agent should mark successful runs as investigated without creating issues
-	if status == "success" {
-		state.MarkRunInvestigated(jobName, runID)
+	cfg := Config{
+		Owner:      "owner",
+		Repo:       "repo",
+		TriageJobs: []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
 	}
 
-	if !state.IsRunInvestigated(jobName, runID) {
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), &ClaudeCodeAgent{})
+	a.ProcessTriageJobs(context.Background())
+
+	// Successful run should be marked as investigated
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "200") {
 		t.Error("expected successful run to be marked as investigated")
+	}
+	// Should not create any worktrees (no investigation needed for success)
+	if len(wtm.createdBranches) > 0 {
+		t.Errorf("expected no worktrees created for successful run, got %d", len(wtm.createdBranches))
+	}
+	// Should not have created any issues
+	if len(gh.createdIssues) > 0 {
+		t.Errorf("expected no issues created, got %d", len(gh.createdIssues))
 	}
 }
 
@@ -1892,6 +1918,190 @@ func TestProcessTriageJobs_CreatesIssueWhenFlakyIssuesEnabled(t *testing.T) {
 
 	if len(issue.Labels) != 1 || issue.Labels[0] != "ci-flake" {
 		t.Errorf("expected label 'ci-flake', got %v", issue.Labels)
+	}
+}
+
+func TestProcessTriageJobs_DefaultOnlyChecksLatest(t *testing.T) {
+	// When TriageLookback is not set (zero), only the most recent run is checked.
+	triageResult := streamResultJSON(AgentResult{Result: "Root cause: network timeout"})
+	now := time.Now()
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 300, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-1 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/300"},
+			{ID: 200, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-2 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/200"},
+			{ID: 100, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-3 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/100"},
+		},
+	}
+	runner := &mockCommandRunner{stdout: triageResult}
+	wtm := &mockWorktreeManager{}
+	state := NewState()
+	cfg := Config{
+		Owner:      "owner",
+		Repo:       "repo",
+		FlakyLabel: "flaky-test",
+		TriageJobs: []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
+		// TriageLookback: 0 (default — only check latest)
+	}
+
+	codeAgent := &sequentialMockCodeAgent{
+		results: []mockCodeAgentCall{
+			{result: AgentResult{Result: "Root cause: network timeout"}},
+		},
+	}
+
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), codeAgent)
+	a.ProcessTriageJobs(context.Background())
+
+	// Should only investigate 1 run (the latest)
+	if codeAgent.callCount != 1 {
+		t.Errorf("expected 1 agent call (latest run only), got %d", codeAgent.callCount)
+	}
+
+	// Only the latest run should be marked as investigated
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "300") {
+		t.Error("expected run 300 to be marked as investigated")
+	}
+	if state.IsRunInvestigated("owner/repo/ci.yml", "200") {
+		t.Error("expected run 200 to NOT be marked as investigated")
+	}
+	if state.IsRunInvestigated("owner/repo/ci.yml", "100") {
+		t.Error("expected run 100 to NOT be marked as investigated")
+	}
+}
+
+func TestProcessTriageJobs_LookbackInvestigatesAllFailedRuns(t *testing.T) {
+	// When TriageLookback is set, all failed runs within the window are investigated.
+	now := time.Now()
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 300, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-1 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/300"},
+			{ID: 200, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-2 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/200"},
+			{ID: 100, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-25 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/100"},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wtm := &mockWorktreeManager{}
+	state := NewState()
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		FlakyLabel:     "flaky-test",
+		TriageJobs:     []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
+		TriageLookback: 24 * time.Hour, // look back 24 hours
+	}
+
+	codeAgent := &sequentialMockCodeAgent{
+		results: []mockCodeAgentCall{
+			{result: AgentResult{Result: "Failure analysis 1"}},
+			{result: AgentResult{Result: "Failure analysis 2"}},
+		},
+	}
+
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), codeAgent)
+	a.ProcessTriageJobs(context.Background())
+
+	// Should investigate 2 runs (300 and 200 are within 24h; 100 is older)
+	if codeAgent.callCount != 2 {
+		t.Errorf("expected 2 agent calls (runs within lookback window), got %d", codeAgent.callCount)
+	}
+
+	// Runs within window should be marked as investigated
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "300") {
+		t.Error("expected run 300 to be marked as investigated")
+	}
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "200") {
+		t.Error("expected run 200 to be marked as investigated")
+	}
+	// Run older than lookback should NOT be investigated
+	if state.IsRunInvestigated("owner/repo/ci.yml", "100") {
+		t.Error("expected run 100 to NOT be marked as investigated (too old)")
+	}
+}
+
+func TestProcessTriageJobs_LookbackSkipsSuccessfulRuns(t *testing.T) {
+	// Successful runs within the lookback window should be marked as investigated
+	// but not trigger agent calls.
+	now := time.Now()
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 300, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-1 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/300"},
+			{ID: 200, Status: "completed", Conclusion: "success", CreatedAt: now.Add(-2 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/200"},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wtm := &mockWorktreeManager{}
+	state := NewState()
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		FlakyLabel:     "flaky-test",
+		TriageJobs:     []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
+		TriageLookback: 24 * time.Hour,
+	}
+
+	codeAgent := &sequentialMockCodeAgent{
+		results: []mockCodeAgentCall{
+			{result: AgentResult{Result: "Failure analysis"}},
+		},
+	}
+
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), codeAgent)
+	a.ProcessTriageJobs(context.Background())
+
+	// Only 1 agent call for the failed run
+	if codeAgent.callCount != 1 {
+		t.Errorf("expected 1 agent call (only failed runs), got %d", codeAgent.callCount)
+	}
+
+	// Both runs should be marked as investigated
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "300") {
+		t.Error("expected failed run 300 to be marked as investigated")
+	}
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "200") {
+		t.Error("expected passed run 200 to be marked as investigated")
+	}
+}
+
+func TestProcessTriageJobs_LookbackSkipsAlreadyInvestigated(t *testing.T) {
+	// Already-investigated runs should be skipped in lookback mode.
+	now := time.Now()
+	gh := &mockGitHubClient{
+		workflowRuns: []WorkflowRun{
+			{ID: 300, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-1 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/300"},
+			{ID: 200, Status: "completed", Conclusion: "failure", CreatedAt: now.Add(-2 * time.Hour), HTMLURL: "https://github.com/owner/repo/actions/runs/200"},
+		},
+	}
+	runner := &mockCommandRunner{}
+	wtm := &mockWorktreeManager{}
+	state := NewState()
+
+	// Pre-mark run 200 as already investigated
+	state.MarkRunInvestigated("owner/repo/ci.yml", "200")
+
+	cfg := Config{
+		Owner:          "owner",
+		Repo:           "repo",
+		FlakyLabel:     "flaky-test",
+		TriageJobs:     []string{"https://github.com/owner/repo/actions/workflows/ci.yml"},
+		TriageLookback: 24 * time.Hour,
+	}
+
+	codeAgent := &sequentialMockCodeAgent{
+		results: []mockCodeAgentCall{
+			{result: AgentResult{Result: "Failure analysis"}},
+		},
+	}
+
+	a := NewAgent(gh, runner, wtm, state, cfg, slog.Default(), codeAgent)
+	a.ProcessTriageJobs(context.Background())
+
+	// Only 1 agent call (run 200 was already investigated)
+	if codeAgent.callCount != 1 {
+		t.Errorf("expected 1 agent call (skip already investigated), got %d", codeAgent.callCount)
+	}
+
+	if !state.IsRunInvestigated("owner/repo/ci.yml", "300") {
+		t.Error("expected run 300 to be marked as investigated")
 	}
 }
 

@@ -59,6 +59,17 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 
 	var triageJobs string
 	flag.StringVar(&triageJobs, "triage-jobs", os.Getenv("OOMPA_TRIAGE_JOBS"), "Comma-separated CI job URLs to monitor for periodic job triage")
+	triageLookback := time.Duration(0)
+	if raw := os.Getenv("OOMPA_TRIAGE_LOOKBACK"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid OOMPA_TRIAGE_LOOKBACK %q: %v\n", raw, err)
+			os.Exit(1)
+		}
+		triageLookback = d
+	}
+	flag.DurationVar(&cfg.TriageLookback, "triage-lookback", triageLookback,
+		"Time window to check for failed triage runs (e.g. 24h, 12h)")
 
 	var logFile string
 	flag.StringVar(&logFile, "log-file", os.Getenv("OOMPA_LOG_FILE"), "Log file path (default: stderr)")
