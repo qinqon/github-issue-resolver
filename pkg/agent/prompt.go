@@ -252,20 +252,31 @@ Instructions:
        missing changelog entry, label-based checks) — these should be fixed by adding the
        required files or content, NOT by removing labels or bypassing the check
    - A failure is UNRELATED if:
-     * It is a flaky test or intermittent infrastructure failure (e.g. timeouts, network errors, resource limits)
+     * It is a flaky test that fails intermittently due to timing, race conditions, or test logic issues
      * It is an e2e/integration test failure and the PR only changes build files, docs, Makefiles, or configs
      * The failing test does not test any code path modified by this PR
      * The error message references components, services, or files not touched by this PR
+   - A failure is INFRASTRUCTURE if:
+     * It is a transient environment or infrastructure issue (e.g. HTTP 502/503, network timeout,
+       DNS failure, disk full, OOM kill, package mirror outage, GitHub Actions runner crash,
+       Docker registry unavailable, CDN outage)
+     * These are NOT flaky tests — they are temporary outages that resolve themselves
    - When in doubt, say UNRELATED — it is better to skip a fixable failure than to waste time on an unfixable one
 
-3. If UNRELATED:
+3. If UNRELATED (flaky test, not infrastructure):
    - Do NOT attempt to fix it, do NOT modify any files
    - Your output MUST start with the word UNRELATED followed by a brief explanation
    - IMPORTANT: Do NOT mention the PR changes, the PR number, or what the PR modifies in your explanation.
-     Focus ONLY on describing the failure itself: what test failed, what the error was, and why it looks flaky or infrastructure-related.
+     Focus ONLY on describing the failure itself: what test failed, what the error was, and why it looks flaky.
      The explanation will be used to create a standalone flaky test issue, so it must make sense without any PR context.
 
-4. If RELATED, fix with verification:
+4. If INFRASTRUCTURE (transient environment issue):
+   - Do NOT attempt to fix it, do NOT modify any files
+   - Your output MUST start with the word INFRASTRUCTURE followed by a brief explanation
+   - IMPORTANT: Do NOT mention the PR changes, the PR number, or what the PR modifies in your explanation.
+     Focus ONLY on describing the infrastructure failure: what service/system was unavailable, what the error was.
+
+5. If RELATED, fix with verification:
    - Prefer minimal, targeted fixes over broad refactoring — do not change more code than
      necessary. Fixing a CI failure does NOT mean also renaming variables, adding docstrings,
      or refactoring adjacent code. Touch only what caused the failure.
@@ -307,7 +318,7 @@ Instructions:
 	prompt.WriteString(`
 Do NOT push or rebase — the agent handles that automatically.
 
-REMINDER: Your FINAL text output MUST start with either UNRELATED or RELATED.
+REMINDER: Your FINAL text output MUST start with either UNRELATED, INFRASTRUCTURE, or RELATED.
 This is how the automation determines what to do next. Any other format will
 cause your work to be discarded.`)
 

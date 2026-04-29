@@ -270,6 +270,7 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"handler.go",
 		"UNRELATED",
 		"RELATED",
+		"INFRASTRUCTURE",
 		"Do NOT push",
 		// Investigation and evaluation criteria
 		"INVESTIGATE the failure systematically",
@@ -279,6 +280,10 @@ func TestBuildCIFixPrompt(t *testing.T) {
 		"confirm the new behavior is correct",
 		"minimal, targeted fixes",
 		"maximum 3 attempts",
+		// INFRASTRUCTURE classification criteria
+		"transient environment or infrastructure issue",
+		"HTTP 502/503",
+		"temporary outages that resolve themselves",
 	}
 
 	for _, want := range checks {
