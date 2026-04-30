@@ -496,6 +496,138 @@ func TestNewRoleLogger_Triage(t *testing.T) {
 	}
 }
 
+func TestBuildRoleEntries_ReviewersInheritance(t *testing.T) {
+	fc := &FileConfig{
+		Projects: []ProjectConfig{
+			{
+				Repo:      "owner/repo",
+				Reviewers: []string{"proj-reviewer1", "proj-reviewer2"},
+				PRs: []PRsRoleConfig{
+					{
+						Watch: []int{1},
+						// Inherits project-level reviewers
+					},
+					{
+						Watch:     []int{2},
+						Reviewers: []string{"role-reviewer"}, // Override
+					},
+				},
+				Issues: []IssuesRoleConfig{
+					{
+						Label: "ai",
+						// Inherits project-level reviewers
+					},
+					{
+						Label:     "special",
+						Reviewers: []string{"issue-reviewer"}, // Override
+					},
+				},
+				Triage: []TriageRoleConfig{
+					{
+						Jobs: []string{"https://ci.example.com/job1"},
+						// Inherits project-level reviewers
+					},
+					{
+						Jobs:      []string{"https://ci.example.com/job2"},
+						Reviewers: []string{"triage-reviewer"}, // Override
+					},
+				},
+			},
+			{
+				Repo: "org/noproj",
+				PRs:  []PRsRoleConfig{{Watch: []int{10}}},
+				// No project-level reviewers — inherits global
+			},
+		},
+	}
+
+	globalCfg := Config{
+		Agent:     "claudecode",
+		Reviewers: []string{"global-reviewer"},
+	}
+
+	entries := BuildRoleEntries(fc, "/tmp/work", globalCfg)
+	if len(entries) != 7 {
+		t.Fatalf("expected 7 entries, got %d", len(entries))
+	}
+
+	// PRs[0]: inherits project-level reviewers
+	if len(entries[0].Config.Reviewers) != 2 || entries[0].Config.Reviewers[0] != "proj-reviewer1" {
+		t.Errorf("PRs[0]: expected project reviewers, got %v", entries[0].Config.Reviewers)
+	}
+
+	// PRs[1]: overrides with role-level reviewers
+	if len(entries[1].Config.Reviewers) != 1 || entries[1].Config.Reviewers[0] != "role-reviewer" {
+		t.Errorf("PRs[1]: expected role reviewers, got %v", entries[1].Config.Reviewers)
+	}
+
+	// Issues[0]: inherits project-level reviewers
+	if len(entries[2].Config.Reviewers) != 2 || entries[2].Config.Reviewers[0] != "proj-reviewer1" {
+		t.Errorf("Issues[0]: expected project reviewers, got %v", entries[2].Config.Reviewers)
+	}
+
+	// Issues[1]: overrides with role-level reviewers
+	if len(entries[3].Config.Reviewers) != 1 || entries[3].Config.Reviewers[0] != "issue-reviewer" {
+		t.Errorf("Issues[1]: expected role reviewers, got %v", entries[3].Config.Reviewers)
+	}
+
+	// Triage[0]: inherits project-level reviewers
+	if len(entries[4].Config.Reviewers) != 2 || entries[4].Config.Reviewers[0] != "proj-reviewer1" {
+		t.Errorf("Triage[0]: expected project reviewers, got %v", entries[4].Config.Reviewers)
+	}
+
+	// Triage[1]: overrides with role-level reviewers
+	if len(entries[5].Config.Reviewers) != 1 || entries[5].Config.Reviewers[0] != "triage-reviewer" {
+		t.Errorf("Triage[1]: expected role reviewers, got %v", entries[5].Config.Reviewers)
+	}
+
+	// Second project PRs[0]: no project reviewers, inherits global
+	if len(entries[6].Config.Reviewers) != 1 || entries[6].Config.Reviewers[0] != "global-reviewer" {
+		t.Errorf("Project2 PRs[0]: expected global reviewers, got %v", entries[6].Config.Reviewers)
+	}
+}
+
+func TestLoadFileConfig_WithReviewers(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    reviewers: [alice, bob]
+    prs:
+      - watch: [1]
+        reviewers: [charlie]
+    issues:
+      - label: ai
+        reviewers: [dave]
+    triage:
+      - jobs: [https://ci.example.com/job]
+        reviewers: [eve]
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fc, err := LoadFileConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	p := fc.Projects[0]
+	if len(p.Reviewers) != 2 || p.Reviewers[0] != "alice" || p.Reviewers[1] != "bob" {
+		t.Errorf("expected project reviewers [alice bob], got %v", p.Reviewers)
+	}
+	if len(p.PRs[0].Reviewers) != 1 || p.PRs[0].Reviewers[0] != "charlie" {
+		t.Errorf("expected prs reviewers [charlie], got %v", p.PRs[0].Reviewers)
+	}
+	if len(p.Issues[0].Reviewers) != 1 || p.Issues[0].Reviewers[0] != "dave" {
+		t.Errorf("expected issues reviewers [dave], got %v", p.Issues[0].Reviewers)
+	}
+	if len(p.Triage[0].Reviewers) != 1 || p.Triage[0].Reviewers[0] != "eve" {
+		t.Errorf("expected triage reviewers [eve], got %v", p.Triage[0].Reviewers)
+	}
+}
+
 func TestIssueKey(t *testing.T) {
 	key := IssueKey("owner", "repo", 42)
 	if key != "owner/repo#42" {
