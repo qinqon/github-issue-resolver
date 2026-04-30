@@ -129,21 +129,29 @@ func (g *GoGitHubClient) GetPRReviewComments(ctx context.Context, owner, repo st
 }
 
 func (g *GoGitHubClient) GetIssueComments(ctx context.Context, owner, repo string, issueNumber int, sinceID int64) ([]ReviewComment, error) {
-	ghComments, _, err := g.client.Issues.ListComments(ctx, owner, repo, issueNumber, nil)
-	if err != nil {
-		return nil, fmt.Errorf("listing issue comments: %w", err)
+	opts := &github.IssueListCommentsOptions{
+		ListOptions: github.ListOptions{PerPage: 100},
 	}
-
 	var comments []ReviewComment
-	for _, c := range ghComments {
-		if c.GetID() <= sinceID {
-			continue
+	for {
+		ghComments, resp, err := g.client.Issues.ListComments(ctx, owner, repo, issueNumber, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing issue comments: %w", err)
 		}
-		comments = append(comments, ReviewComment{
-			ID:   c.GetID(),
-			User: c.GetUser().GetLogin(),
-			Body: c.GetBody(),
-		})
+		for _, c := range ghComments {
+			if c.GetID() <= sinceID {
+				continue
+			}
+			comments = append(comments, ReviewComment{
+				ID:   c.GetID(),
+				User: c.GetUser().GetLogin(),
+				Body: c.GetBody(),
+			})
+		}
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	return comments, nil
 }
