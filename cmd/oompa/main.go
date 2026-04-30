@@ -634,7 +634,7 @@ func runMultiProject(globalCfg agent.Config, configPath string, ghClient *agent.
 
 			if entry.Role == "triage" && entry.Schedule != "" {
 				// Triage with scheduling: sleep until next run time
-				runScheduledTriage(ctx, a, entry, roleLogger, ghClient, exitOwner, exitRepo, commitSHA)
+				runScheduledTriage(ctx, a, entry, roleLogger, ghClient, exitOwner, exitRepo, commitSHA, cancel)
 			} else {
 				// Standard poll loop
 				runRoleLoop(ctx, a, entry, roleLogger, ghClient, exitOwner, exitRepo, commitSHA, cancel)
@@ -674,7 +674,7 @@ func runRoleLoop(ctx context.Context, a *agent.Agent, entry agent.RoleEntry, log
 }
 
 // runScheduledTriage runs triage on a schedule instead of a fixed poll interval.
-func runScheduledTriage(ctx context.Context, a *agent.Agent, entry agent.RoleEntry, logger *slog.Logger, ghClient *agent.GoGitHubClient, exitOwner, exitRepo, commitSHA string) {
+func runScheduledTriage(ctx context.Context, a *agent.Agent, entry agent.RoleEntry, logger *slog.Logger, ghClient *agent.GoGitHubClient, exitOwner, exitRepo, commitSHA string, cancel context.CancelFunc) {
 	for {
 		next, err := agent.ParseSchedule(entry.Schedule, time.Now())
 		if err != nil {
@@ -708,6 +708,7 @@ func runScheduledTriage(ctx context.Context, a *agent.Agent, entry agent.RoleEnt
 
 		// Check for new version after each triage run
 		if exitOwner != "" && commitSHA != "" && shouldExitForNewVersion(ctx, ghClient, exitOwner, exitRepo, commitSHA, logger) {
+			cancel() // cancel the shared context → all goroutines stop
 			return
 		}
 	}

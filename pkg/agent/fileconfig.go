@@ -102,8 +102,16 @@ func validateFileConfig(cfg *FileConfig) error {
 		return fmt.Errorf("invalid agent %q: must be claudecode or opencode", cfg.Agent)
 	}
 
-	if cfg.AgentModel != "" && cfg.Agent != "opencode" {
-		return fmt.Errorf("agent-model can only be used with agent: opencode")
+	if cfg.AgentModel != "" {
+		// agent-model is only valid with opencode. When agent is omitted in the
+		// file config, it defaults to the global config (typically claudecode),
+		// so we require agent to be explicitly set to opencode.
+		if cfg.Agent == "" {
+			return fmt.Errorf("agent-model requires agent to be explicitly set to opencode")
+		}
+		if cfg.Agent != "opencode" {
+			return fmt.Errorf("agent-model can only be used with agent: opencode")
+		}
 	}
 
 	if cfg.PollInterval != "" {
@@ -185,6 +193,11 @@ func validateFileConfig(cfg *FileConfig) error {
 		for j, triage := range p.Triage {
 			if len(triage.Jobs) == 0 {
 				return fmt.Errorf("project %d (%s): triage[%d]: jobs is required", i, p.Repo, j)
+			}
+			if triage.Schedule != "" {
+				if _, err := ParseSchedule(triage.Schedule, time.Now()); err != nil {
+					return fmt.Errorf("project %d (%s): triage[%d]: %w", i, p.Repo, j, err)
+				}
 			}
 			for _, c := range triage.SkipComment {
 				if !validComments[c] {

@@ -583,3 +583,57 @@ projects:
 		t.Fatal("expected error for agent-model with claudecode")
 	}
 }
+
+func TestLoadFileConfig_AgentModelWithoutAgentSet(t *testing.T) {
+	yaml := `
+agent-model: some-model
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+
+	_, err := LoadFileConfig(path)
+	if err == nil {
+		t.Fatal("expected error for agent-model without explicit agent")
+	}
+}
+
+func TestLoadFileConfig_InvalidSchedule(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    triage:
+      - jobs: [https://ci.example.com/job]
+        schedule: "09:00 Invalid/Timezone"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+
+	_, err := LoadFileConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid schedule timezone")
+	}
+}
+
+func TestLoadFileConfig_ValidSchedule(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    triage:
+      - jobs: [https://ci.example.com/job]
+        schedule: "09:00 UTC"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+
+	_, err := LoadFileConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error for valid schedule: %v", err)
+	}
+}
