@@ -638,6 +638,104 @@ projects:
 	}
 }
 
+func TestLoadFileConfig_InvalidLookback(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    triage:
+      - jobs: [https://ci.example.com/job]
+        lookback: "not-a-duration"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
+
+	_, err := LoadFileConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid lookback duration")
+	}
+}
+
+func TestLoadFileConfig_NegativeLookback(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    triage:
+      - jobs: [https://ci.example.com/job]
+        lookback: "-1h"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
+
+	_, err := LoadFileConfig(path)
+	if err == nil {
+		t.Fatal("expected error for negative lookback duration")
+	}
+}
+
+func TestLoadFileConfig_ValidLookback(t *testing.T) {
+	yaml := `
+projects:
+  - repo: owner/repo
+    triage:
+      - jobs: [https://ci.example.com/job]
+        lookback: 24h
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
+
+	fc, err := LoadFileConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error for valid lookback: %v", err)
+	}
+
+	if fc.Projects[0].Triage[0].Lookback != "24h" {
+		t.Errorf("expected lookback '24h', got %q", fc.Projects[0].Triage[0].Lookback)
+	}
+}
+
+func TestBuildRoleEntries_TriageLookback(t *testing.T) {
+	const (
+		defaultLookback  = 12 * time.Hour
+		overrideLookback = 24 * time.Hour
+	)
+
+	fc := &FileConfig{
+		Projects: []ProjectConfig{
+			{
+				Repo: "owner/repo",
+				Triage: []TriageRoleConfig{
+					{
+						Jobs:     []string{"https://ci.example.com/job1"},
+						Lookback: "24h", // Override global default
+					},
+					{
+						Jobs: []string{"https://ci.example.com/job2"},
+						// No lookback — should inherit global default
+					},
+				},
+			},
+		},
+	}
+
+	entries := BuildRoleEntries(fc, "/tmp/work", Config{Agent: "claudecode", TriageLookback: defaultLookback})
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// First triage entry overrides with role-level lookback
+	if entries[0].Config.TriageLookback != overrideLookback {
+		t.Errorf("expected TriageLookback %v, got %v", overrideLookback, entries[0].Config.TriageLookback)
+	}
+
+	// Second triage entry inherits global default lookback
+	if entries[1].Config.TriageLookback != defaultLookback {
+		t.Errorf("expected TriageLookback %v, got %v", defaultLookback, entries[1].Config.TriageLookback)
+	}
+}
+
 func TestLoadFileConfig_UnknownKeysRejected(t *testing.T) {
 	yaml := `
 agent: opencode
