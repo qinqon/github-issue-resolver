@@ -437,35 +437,66 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 		}
 
 		// Push if agent made changes (uncommitted or committed directly)
+		pushed, changeDetected := false, false
 		hasChanges := a.hasUncommittedChanges(ctx, task.work.WorktreePath)
+		changeDetected = hasChanges
 		if hasChanges {
 			if err := a.gitAmendAll(ctx, task.work.WorktreePath); err != nil {
 				a.logger.Error("failed to amend commit", "pr", task.work.PRNumber, "error", err)
 			} else if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 				a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
+			} else {
+				pushed = true
 			}
 		} else {
 			headAfter, _, revErr := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
 			headSHAAfter := strings.TrimSpace(string(headAfter))
 			if revErr == nil && headSHABefore != "" && headSHAAfter != headSHABefore {
+				changeDetected = true
 				a.logger.Info("agent committed directly, pushing", "pr", task.work.PRNumber)
 				if err := a.gitPush(ctx, task.work.WorktreePath, true); err != nil {
 					a.logger.Error("failed to push", "pr", task.work.PRNumber, "error", err)
+				} else {
+					pushed = true
 				}
 			}
 		}
 
-		// Update last seen comment ID
+		// Reply to each review comment thread.
+		// Skip replies when changes were detected but push failed to avoid misleading messages.
+		// Only advance the comment cursor for comments where the reply was posted successfully,
+		// so that failed replies are retried on the next poll cycle.
+		allRepliesPosted := true
 		for _, c := range task.humanComments {
-			if c.ID > task.work.LastCommentID {
-				task.work.LastCommentID = c.ID
+			var replyBody string
+			switch {
+			case pushed:
+				replyBody = "Addressed in the latest push."
+			case !changeDetected:
+				replyBody = "Reviewed — no code changes needed."
+			default:
+				allRepliesPosted = false
+				continue // Push failed for detected changes; skip reply to avoid misleading message
+			}
+			if err := a.gh.ReplyToPRComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber, c.ID, replyBody); err != nil {
+				a.logger.Warn("failed to reply to PR comment", "comment", c.ID, "error", err)
+				allRepliesPosted = false
 			}
 		}
 
-		// Update last seen review ID
-		for _, r := range task.humanReviews {
-			if r.ID > task.work.LastReviewID {
-				task.work.LastReviewID = r.ID
+		// Only advance cursors when all replies were posted successfully.
+		// If any reply was skipped or failed, keep the old cursor so the
+		// comments are retried on the next poll cycle.
+		if allRepliesPosted {
+			for _, c := range task.humanComments {
+				if c.ID > task.work.LastCommentID {
+					task.work.LastCommentID = c.ID
+				}
+			}
+			for _, r := range task.humanReviews {
+				if r.ID > task.work.LastReviewID {
+					task.work.LastReviewID = r.ID
+				}
 			}
 		}
 	})

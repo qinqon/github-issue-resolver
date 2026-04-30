@@ -35,6 +35,7 @@ type mockGitHubClient struct {
 	workflowRuns    []WorkflowRun // workflow runs to return from ListWorkflowRuns
 
 	listIssuesErr error
+	replyErr      error // error to return from ReplyToPRComment
 }
 
 func (m *mockGitHubClient) ListLabeledIssues(_ context.Context, _, _, _ string) ([]Issue, error) {
@@ -124,6 +125,9 @@ func (m *mockGitHubClient) HasPRCommentReaction(_ context.Context, _, _ string, 
 }
 
 func (m *mockGitHubClient) ReplyToPRComment(_ context.Context, _, _ string, _ int, commentID int64, body string) error {
+	if m.replyErr != nil {
+		return m.replyErr
+	}
 	m.addedComments = append(m.addedComments, fmt.Sprintf("reply:%d:%s", commentID, body))
 	return nil
 }
@@ -461,6 +465,85 @@ func TestProcessReviewComments_AddressesHumanComments(t *testing.T) {
 	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID != 60 {
 		t.Errorf("expected lastCommentID 60, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID)
 	}
+
+	// Verify reply was posted to the review comment with correct content.
+	// In this test the mock runner returns empty stdout for git commands,
+	// so no changes are detected and the reply should say "no code changes needed".
+	expectedReply := "reply:60:Reviewed — no code changes needed."
+	foundReply := slices.Contains(gh.addedComments, expectedReply)
+	if !foundReply {
+		t.Errorf("expected reply %q, got comments: %v", expectedReply, gh.addedComments)
+	}
+}
+
+func TestProcessReviewComments_PushFailureDoesNotAdvanceCursor(t *testing.T) {
+	gh := &mockGitHubClient{
+		prComments: []ReviewComment{
+			{ID: 60, User: "reviewer", Body: "Please fix this", Path: "main.go", Line: 10},
+		},
+	}
+	// Runner returns non-empty stdout (triggers changeDetected) and an error (causes push to fail)
+	runner := &mockCommandRunner{stdout: []byte("dirty"), err: fmt.Errorf("git failed")}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	// Use sequentialMockCodeAgent so the agent call succeeds despite the broken runner
+	agent.codeAgent = &sequentialMockCodeAgent{
+		results: []mockCodeAgentCall{{result: AgentResult{Result: "Done"}}},
+	}
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
+		IssueNumber:   42,
+		IssueTitle:    "Fix bug",
+		PRNumber:      100,
+		Status:        "pr-open",
+		WorktreePath:  "/tmp/worktree",
+		LastCommentID: 50,
+	}
+
+	agent.ProcessReviewComments(context.Background())
+
+	// No replies should be posted (push failed with detected changes)
+	for _, comment := range gh.addedComments {
+		if strings.HasPrefix(comment, "reply:") {
+			t.Errorf("expected no reply when push failed, got: %s", comment)
+		}
+	}
+
+	// Cursor should NOT advance since replies were skipped
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
+	if work.LastCommentID != 50 {
+		t.Errorf("expected LastCommentID to stay at 50, got %d", work.LastCommentID)
+	}
+}
+
+func TestProcessReviewComments_ReplyFailureDoesNotAdvanceCursor(t *testing.T) {
+	implResult := streamResultJSON(AgentResult{Result: "Done"})
+	gh := &mockGitHubClient{
+		prComments: []ReviewComment{
+			{ID: 60, User: "reviewer", Body: "Please fix this", Path: "main.go", Line: 10},
+		},
+		replyErr: fmt.Errorf("GitHub API error"),
+	}
+	runner := &mockCommandRunner{claudeResults: [][]byte{implResult}}
+	wt := &mockWorktreeManager{}
+
+	agent := newTestAgent(gh, runner, wt)
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
+		IssueNumber:   42,
+		IssueTitle:    "Fix bug",
+		PRNumber:      100,
+		Status:        "pr-open",
+		WorktreePath:  "/tmp/worktree",
+		LastCommentID: 50,
+	}
+
+	agent.ProcessReviewComments(context.Background())
+
+	// Cursor should NOT advance since reply failed
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
+	if work.LastCommentID != 50 {
+		t.Errorf("expected LastCommentID to stay at 50, got %d", work.LastCommentID)
+	}
 }
 
 func TestProcessReviewComments_SkipsNonWhitelistedUsers(t *testing.T) {
@@ -545,7 +628,6 @@ func (m *sequentialMockCodeAgent) Run(_ context.Context, _ CommandRunner, _, pro
 	}
 	return AgentResult{}, fmt.Errorf("unexpected call %d", idx)
 }
-
 
 func TestCleanupDone_MergedPR(t *testing.T) {
 	gh := &mockGitHubClient{prState: "merged"}
