@@ -68,6 +68,7 @@ type IssuesRoleConfig struct {
 type TriageRoleConfig struct {
 	Jobs              []string `yaml:"jobs"`
 	Schedule          string   `yaml:"schedule"`
+	Lookback          string   `yaml:"lookback"`
 	CreateFlakyIssues *bool    `yaml:"create-flaky-issues"`
 	FlakyLabel        string   `yaml:"flaky-label"`
 	SkipComment       []string `yaml:"skip-comment"`
@@ -200,6 +201,15 @@ func validateFileConfig(cfg *FileConfig) error {
 			if triage.Schedule != "" {
 				if _, err := ParseSchedule(triage.Schedule, time.Now()); err != nil {
 					return fmt.Errorf("project %d (%s): triage[%d]: %w", i, p.Repo, j, err)
+				}
+			}
+			if triage.Lookback != "" {
+				d, err := time.ParseDuration(triage.Lookback)
+				if err != nil {
+					return fmt.Errorf("project %d (%s): triage[%d]: invalid lookback %q: %w", i, p.Repo, j, triage.Lookback, err)
+				}
+				if d < 0 {
+					return fmt.Errorf("project %d (%s): triage[%d]: lookback must be >= 0, got %q", i, p.Repo, j, triage.Lookback)
 				}
 			}
 			for _, c := range triage.SkipComment {
@@ -357,6 +367,12 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 			cfg.FlakyLabel = stringOr(triage.FlakyLabel, projFlakyLabel)
 			cfg.SkipComments = stringsOr(triage.SkipComment, projSkipComment)
 			cfg.SkipFix = boolOr(triage.SkipFix, projSkipFix)
+			cfg.TriageLookback = globalCfg.TriageLookback
+			if triage.Lookback != "" {
+				if d, err := time.ParseDuration(triage.Lookback); err == nil {
+					cfg.TriageLookback = d
+				}
+			}
 			entries = append(entries, RoleEntry{
 				Config:   cfg,
 				Role:     "triage",

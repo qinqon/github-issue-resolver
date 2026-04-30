@@ -40,6 +40,7 @@ projects:
       - jobs:
           - https://prow.example.com/nightly
         schedule: "09:00 Europe/Madrid"
+        lookback: 24h
         create-flaky-issues: true
         flaky-label: ci-flake
 
