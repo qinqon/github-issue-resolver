@@ -36,6 +36,7 @@ type ProjectConfig struct {
 	Reactions         []string `yaml:"reactions"`
 	Label             string   `yaml:"label"`
 	OnlyAssigned      *bool    `yaml:"only-assigned"`
+	Reviewers         []string `yaml:"reviewers"` // whitelist of users/bots whose reviews to address
 
 	// Role arrays
 	PRs    []PRsRoleConfig    `yaml:"prs"`
@@ -51,6 +52,7 @@ type PRsRoleConfig struct {
 	SkipFix           *bool    `yaml:"skip-fix"`
 	CreateFlakyIssues *bool    `yaml:"create-flaky-issues"`
 	FlakyLabel        string   `yaml:"flaky-label"`
+	Reviewers         []string `yaml:"reviewers"` // overrides project-level reviewers
 }
 
 // IssuesRoleConfig represents a single Issues role entry.
@@ -62,6 +64,7 @@ type IssuesRoleConfig struct {
 	Fork              string   `yaml:"fork"`
 	CreateFlakyIssues *bool    `yaml:"create-flaky-issues"`
 	FlakyLabel        string   `yaml:"flaky-label"`
+	Reviewers         []string `yaml:"reviewers"` // overrides project-level reviewers
 }
 
 // TriageRoleConfig represents a single Triage role entry.
@@ -73,6 +76,7 @@ type TriageRoleConfig struct {
 	FlakyLabel        string   `yaml:"flaky-label"`
 	SkipComment       []string `yaml:"skip-comment"`
 	SkipFix           *bool    `yaml:"skip-fix"`
+	Reviewers         []string `yaml:"reviewers"` // overrides project-level reviewers
 }
 
 // LoadFileConfig reads and parses a YAML config file, returning the validated FileConfig.
@@ -294,6 +298,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 		projReactions := p.Reactions
 		projLabel := stringOr(p.Label, "good-for-ai")
 		projOnlyAssigned := boolOr(p.OnlyAssigned, false)
+		projReviewers := stringsOr(p.Reviewers, globalCfg.Reviewers)
 
 		// Base config for this project (shared fields)
 		baseCfg := Config{
@@ -315,7 +320,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 			GitAuthorName:   globalCfg.GitAuthorName,
 			GitAuthorEmail:  globalCfg.GitAuthorEmail,
 			SignedOffBy:     globalCfg.SignedOffBy,
-			Reviewers:       globalCfg.Reviewers,
+			Reviewers:       projReviewers,
 			Version:         globalCfg.Version,
 			// GitHub App auth (shared)
 			GitHubAppID:             globalCfg.GitHubAppID,
@@ -337,6 +342,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 			cfg.SkipFix = boolOr(pr.SkipFix, projSkipFix)
 			cfg.CreateFlakyIssues = boolOr(pr.CreateFlakyIssues, projCreateFlaky)
 			cfg.FlakyLabel = stringOr(pr.FlakyLabel, projFlakyLabel)
+			cfg.Reviewers = stringsOr(pr.Reviewers, projReviewers)
 			entries = append(entries, RoleEntry{Config: cfg, Role: "prs"})
 		}
 
@@ -349,6 +355,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 			cfg.SkipComments = stringsOr(issue.SkipComment, projSkipComment)
 			cfg.CreateFlakyIssues = boolOr(issue.CreateFlakyIssues, projCreateFlaky)
 			cfg.FlakyLabel = stringOr(issue.FlakyLabel, projFlakyLabel)
+			cfg.Reviewers = stringsOr(issue.Reviewers, projReviewers)
 			// Issues can override fork
 			if issue.Fork != "" {
 				forkParts := strings.SplitN(issue.Fork, "/", 2)
@@ -373,6 +380,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 					cfg.TriageLookback = d
 				}
 			}
+			cfg.Reviewers = stringsOr(triage.Reviewers, projReviewers)
 			entries = append(entries, RoleEntry{
 				Config:   cfg,
 				Role:     "triage",

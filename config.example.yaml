@@ -45,6 +45,8 @@ projects:
         flaky-label: ci-flake
 
   - repo: openshift/hypershift
+    # Project-level reviewers — inherited by all roles in this project
+    reviewers: [coderabbitai[bot], nunnatsa, orenc1]
     prs:
       - watch: [8365]
         reactions: [ci, conflicts, rebase]
@@ -52,3 +54,5 @@ projects:
   - repo: qinqon/oompa
     issues:
       - label: good-for-ai
+        # Role-level reviewers override project-level (and global)
+        reviewers: [qinqon, gemini-code-assist[bot], coderabbitai[bot]]
