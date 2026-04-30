@@ -40,7 +40,7 @@ func TestBuildStateFromGitHub_RecoversPRState(t *testing.T) {
 
 	state := BuildStateFromGitHub(context.Background(), gh, cfg, "/tmp/clone", slog.Default())
 
-	work, ok := state.ActiveIssues[42]
+	work, ok := state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if !ok {
 		t.Fatal("expected issue 42 in state")
 	}
@@ -63,7 +63,7 @@ func TestBuildStateFromGitHub_RecoversFailedState(t *testing.T) {
 
 	state := BuildStateFromGitHub(context.Background(), gh, cfg, "/tmp/clone", slog.Default())
 
-	work, ok := state.ActiveIssues[99]
+	work, ok := state.ActiveIssues[IssueKey("owner", "repo", 99)]
 	if !ok {
 		t.Fatal("expected issue 99 in state")
 	}
@@ -107,7 +107,7 @@ func TestBuildStateFromGitHub_WatchPRsSkipsLabeledIssues(t *testing.T) {
 		t.Errorf("expected 1 issue in state, got %d", len(state.ActiveIssues))
 	}
 
-	work, ok := state.ActiveIssues[313]
+	work, ok := state.ActiveIssues[IssueKey("owner", "repo", 313)]
 	if !ok {
 		t.Fatal("expected watched PR 313 in state")
 	}
@@ -116,7 +116,7 @@ func TestBuildStateFromGitHub_WatchPRsSkipsLabeledIssues(t *testing.T) {
 	}
 
 	// PR 299 from the labeled issue should NOT be in state
-	if _, exists := state.ActiveIssues[123]; exists {
+	if _, exists := state.ActiveIssues[IssueKey("owner", "repo", 123)]; exists {
 		t.Error("labeled issue 123 should not be in state when watch-prs is configured")
 	}
 	for _, w := range state.ActiveIssues {

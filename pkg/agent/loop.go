@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -101,35 +100,12 @@ func (a *Agent) RefreshToken(ctx context.Context) error {
 	return nil
 }
 
-// runParallel executes a function on each item in parallel with a bounded worker pool.
-// If maxWorkers <= 1 or len(items) <= 1, runs sequentially instead.
-func runParallel[T any](ctx context.Context, maxWorkers int, items []T, fn func(context.Context, T)) {
-	if maxWorkers <= 1 || len(items) <= 1 {
-		for _, item := range items {
-			fn(ctx, item)
-		}
-		return
-	}
-
-	workers := min(len(items), maxWorkers)
-
-	sem := make(chan struct{}, workers)
-	var wg sync.WaitGroup
-
+// runSequential executes a function on each item sequentially.
+// Each role entry runs within its own goroutine, so no worker pool is needed.
+func runSequential[T any](ctx context.Context, items []T, fn func(context.Context, T)) {
 	for _, item := range items {
-		wg.Add(1)
-		sem <- struct{}{}
-
-		// Capture item for goroutine
-		item := item
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			fn(ctx, item)
-		}()
+		fn(ctx, item)
 	}
-
-	wg.Wait()
 }
 
 // NewAgent creates a new Agent with all dependencies wired.
@@ -187,7 +163,8 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 	var tasks []newIssueTask
 
 	for _, issue := range issues {
-		if work, exists := a.state.ActiveIssues[issue.Number]; exists {
+		issueKey := IssueKey(a.cfg.Owner, a.cfg.Repo, issue.Number)
+		if work, exists := a.state.ActiveIssues[issueKey]; exists {
 			// Re-check for PR if we lost track of it
 			if work.PRNumber == 0 && work.Status == StatusImplementing {
 				prs, err := a.gh.ListPRsByHead(ctx, a.cfg.Owner, a.cfg.Repo, a.cfg.GitHubHeadOwner, work.BranchName)
@@ -220,7 +197,7 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 			openPR, hasMerged := classifyPRs(prs)
 			if openPR != nil {
 				a.logger.Info("PR already exists for issue", "issue", issue.Number, "pr", openPR.Number)
-				a.state.ActiveIssues[issue.Number] = &IssueWork{
+				a.state.ActiveIssues[issueKey] = &IssueWork{
 					IssueNumber: issue.Number,
 					IssueTitle:  issue.Title,
 					BranchName:  branchName,
@@ -279,7 +256,7 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 		}
 
 		// Insert into state map before parallel phase
-		a.state.ActiveIssues[issue.Number] = work
+		a.state.ActiveIssues[issueKey] = work
 
 		tasks = append(tasks, newIssueTask{
 			issue:        issue,
@@ -290,7 +267,7 @@ func (a *Agent) ProcessNewIssues(ctx context.Context) {
 	}
 
 	// Parallel phase: run Claude, push, create PR
-	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task newIssueTask) {
+	runSequential(ctx, tasks, func(ctx context.Context, task newIssueTask) {
 		prompt := buildImplementationPrompt(task.issue, a.cfg.SignedOffBy)
 		_, err := a.codeAgent.Run(ctx, a.runner, task.worktreePath, prompt, a.logger, false)
 		if err != nil {
@@ -440,7 +417,7 @@ func (a *Agent) ProcessReviewComments(ctx context.Context) {
 	}
 
 	// Parallel phase: run agent to address review feedback, then push changes
-	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task reviewTask) {
+	runSequential(ctx, tasks, func(ctx context.Context, task reviewTask) {
 		// Capture local HEAD before agent runs so we can detect if it committed directly
 		headBefore, _, err := a.runner.Run(ctx, task.work.WorktreePath, "git", "rev-parse", "HEAD")
 		if err != nil {
@@ -636,7 +613,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 	}
 
 	// Parallel phase: Claude invocations and post-processing
-	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task ciTask) {
+	runSequential(ctx, tasks, func(ctx context.Context, task ciTask) {
 		prompt := buildCIFixPrompt(*task.work, task.failures, task.diff, task.commits, a.cfg.SignedOffBy, a.cfg.SkipFix)
 		result, err := a.codeAgent.Run(ctx, a.runner, task.work.WorktreePath, prompt, a.logger, true)
 		if err != nil {
@@ -1210,7 +1187,7 @@ func (a *Agent) ProcessTriageJobs(ctx context.Context) {
 	}
 
 	// Investigate collected failed runs in parallel
-	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task triageRunTask) {
+	runSequential(ctx, tasks, func(ctx context.Context, task triageRunTask) {
 		a.investigateTriageRun(ctx, task.ciSource, task.run)
 	})
 }
@@ -1311,7 +1288,7 @@ func (a *Agent) investigateTriageRun(ctx context.Context, ciSource CIJobSource, 
 
 // CleanupDone removes worktrees for merged or closed PRs.
 func (a *Agent) CleanupDone(ctx context.Context) {
-	for issueNum, work := range a.state.ActiveIssues {
+	for key, work := range a.state.ActiveIssues {
 		if work.PRNumber == 0 {
 			continue
 		}
@@ -1332,7 +1309,7 @@ func (a *Agent) CleanupDone(ctx context.Context) {
 			a.logger.Error("failed to remove worktree", "path", work.WorktreePath, "error", err)
 		}
 
-		delete(a.state.ActiveIssues, issueNum)
+		delete(a.state.ActiveIssues, key)
 	}
 }
 
@@ -1398,7 +1375,7 @@ func (a *Agent) BootstrapWatchedPRs(ctx context.Context) {
 			CreatedAt:    time.Now(),
 		}
 
-		a.state.ActiveIssues[prNumber] = work
+		a.state.ActiveIssues[IssueKey(a.cfg.Owner, a.cfg.Repo, prNumber)] = work
 		a.logger.Info("bootstrapped watched PR", "pr", prNumber, "branch", branchName, "title", pr.Title)
 	}
 }
@@ -1736,7 +1713,7 @@ func isConflictError(stderr string) bool {
 
 // resolveConflictsParallel invokes the coding agent to resolve conflicts for a list of tasks in parallel.
 func (a *Agent) resolveConflictsParallel(ctx context.Context, tasks []conflictTask) {
-	runParallel(ctx, a.cfg.MaxWorkers, tasks, func(ctx context.Context, task conflictTask) {
+	runSequential(ctx, tasks, func(ctx context.Context, task conflictTask) {
 		// Get commit count before invoking agent and validate capture
 		commitsBefore := a.getPRCommits(ctx, task.work.WorktreePath)
 		if commitsBefore == nil {

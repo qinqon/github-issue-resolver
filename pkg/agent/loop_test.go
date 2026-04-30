@@ -253,7 +253,7 @@ func TestProcessNewIssues_SkipsAlreadyTracked(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{IssueNumber: 42, Status: "pr-open"}
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{IssueNumber: 42, Status: "pr-open"}
 
 	agent.ProcessNewIssues(context.Background())
 
@@ -274,7 +274,7 @@ func TestProcessNewIssues_RechecksForPR(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber: 42,
 		BranchName:  "ai/issue-42",
 		Status:      "implementing",
@@ -289,7 +289,7 @@ func TestProcessNewIssues_RechecksForPR(t *testing.T) {
 	}
 
 	// Should have found the PR
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work.PRNumber != 100 {
 		t.Errorf("expected PRNumber 100, got %d", work.PRNumber)
 	}
@@ -313,7 +313,7 @@ func TestProcessNewIssues_HappyPath(t *testing.T) {
 		t.Errorf("expected branch 'ai/issue-42', got %v", wt.createdBranches)
 	}
 
-	work, ok := agent.state.ActiveIssues[42]
+	work, ok := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if !ok {
 		t.Fatal("issue 42 not in state")
 	}
@@ -370,7 +370,7 @@ func TestProcessNewIssues_SkipsWhenPRExists(t *testing.T) {
 		t.Error("should not create worktree when PR already exists")
 	}
 
-	work, ok := agent.state.ActiveIssues[42]
+	work, ok := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if !ok {
 		t.Fatal("issue 42 should be tracked")
 	}
@@ -399,7 +399,7 @@ func TestProcessNewIssues_ClaudeFailure(t *testing.T) {
 		t.Errorf("expected 1 comment (in-progress only, no error comment), got %d", len(gh.addedComments))
 	}
 
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work == nil || work.Status != "failed" {
 		t.Error("expected issue status to be 'failed'")
 	}
@@ -411,7 +411,7 @@ func TestProcessReviewComments_NoNewComments(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:   42,
 		PRNumber:      100,
 		Status:        "pr-open",
@@ -437,7 +437,7 @@ func TestProcessReviewComments_AddressesHumanComments(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:   42,
 		IssueTitle:    "Fix bug",
 		PRNumber:      100,
@@ -458,8 +458,8 @@ func TestProcessReviewComments_AddressesHumanComments(t *testing.T) {
 		t.Fatalf("expected 1 claude call, got %d", claudeCalls)
 	}
 
-	if agent.state.ActiveIssues[42].LastCommentID != 60 {
-		t.Errorf("expected lastCommentID 60, got %d", agent.state.ActiveIssues[42].LastCommentID)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID != 60 {
+		t.Errorf("expected lastCommentID 60, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID)
 	}
 }
 
@@ -474,7 +474,7 @@ func TestProcessReviewComments_SkipsNonWhitelistedUsers(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.Reviewers = []string{"trusted-reviewer"}
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:   42,
 		PRNumber:      100,
 		Status:        "pr-open",
@@ -501,7 +501,7 @@ func TestProcessReviewComments_AllowsAllWhenWhitelistEmpty(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	// No reviewers set — empty whitelist means allow all
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:   42,
 		IssueTitle:    "Fix bug",
 		PRNumber:      100,
@@ -553,7 +553,7 @@ func TestCleanupDone_MergedPR(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		Status:       "pr-open",
@@ -565,7 +565,7 @@ func TestCleanupDone_MergedPR(t *testing.T) {
 	if len(wt.removedPaths) != 1 || wt.removedPaths[0] != "/tmp/worktree" {
 		t.Errorf("expected worktree removal, got %v", wt.removedPaths)
 	}
-	if _, exists := agent.state.ActiveIssues[42]; exists {
+	if _, exists := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]; exists {
 		t.Error("expected issue 42 to be removed from state")
 	}
 }
@@ -576,7 +576,7 @@ func TestCleanupDone_ClosedPR(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		Status:       "pr-open",
@@ -588,7 +588,7 @@ func TestCleanupDone_ClosedPR(t *testing.T) {
 	if len(wt.removedPaths) != 1 {
 		t.Error("expected worktree removal for closed PR")
 	}
-	if _, exists := agent.state.ActiveIssues[42]; exists {
+	if _, exists := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]; exists {
 		t.Error("expected issue 42 to be removed from state")
 	}
 }
@@ -599,7 +599,7 @@ func TestCleanupDone_OpenPR(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		Status:       "pr-open",
@@ -611,7 +611,7 @@ func TestCleanupDone_OpenPR(t *testing.T) {
 	if len(wt.removedPaths) != 0 {
 		t.Error("should not remove worktree for open PR")
 	}
-	if _, exists := agent.state.ActiveIssues[42]; !exists {
+	if _, exists := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]; !exists {
 		t.Error("should not remove open PR from state")
 	}
 }
@@ -628,7 +628,7 @@ func TestProcessCIFailures_FixesFailingCI(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -648,8 +648,8 @@ func TestProcessCIFailures_FixesFailingCI(t *testing.T) {
 	if claudeCalls != 1 {
 		t.Fatalf("expected 1 claude call, got %d", claudeCalls)
 	}
-	if agent.state.ActiveIssues[42].CIFixAttempts != 1 {
-		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[42].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].CIFixAttempts)
 	}
 }
 
@@ -663,7 +663,7 @@ func TestProcessCIFailures_SkipsPassingCI(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber: 42,
 		PRNumber:    100,
 		BranchName:  "ai/issue-42",
@@ -687,7 +687,7 @@ func TestProcessCIFailures_StopsAfterMaxRetries(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:   42,
 		IssueTitle:    "Fix bug",
 		PRNumber:      100,
@@ -716,7 +716,7 @@ func TestProcessCIFailures_SkipsPendingCI(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber: 42,
 		PRNumber:    100,
 		BranchName:  "ai/issue-42",
@@ -745,7 +745,7 @@ func TestProcessCIFailures_CreatesFlakyIssueWhenUnrelated(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true // Enable flaky issue creation
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -813,7 +813,7 @@ func TestProcessCIFailures_InfrastructureSkipsFlakyIssue(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true // Even with flaky issues enabled, INFRASTRUCTURE should skip
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -843,7 +843,7 @@ func TestProcessCIFailures_InfrastructureSkipsFlakyIssue(t *testing.T) {
 	}
 
 	// Verify state was updated correctly
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work.LastCIStatus != "infrastructure-failure" {
 		t.Errorf("expected LastCIStatus 'infrastructure-failure', got %q", work.LastCIStatus)
 	}
@@ -867,7 +867,7 @@ func TestProcessCIFailures_SkipsFlakyIssueWhenDisabled(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = false // Disabled by default
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -904,7 +904,7 @@ func TestProcessCIFailures_SkipCommentCIUnrelated(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"ci-unrelated"}
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -921,7 +921,7 @@ func TestProcessCIFailures_SkipCommentCIUnrelated(t *testing.T) {
 	}
 
 	// State should still be updated
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work.LastCIStatus != "unrelated-failure" {
 		t.Errorf("expected LastCIStatus 'unrelated-failure', got %q", work.LastCIStatus)
 	}
@@ -947,7 +947,7 @@ func TestProcessCIFailures_SkipCommentCIUnrelated_StillCreatesFlakyIssue(t *test
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"ci-unrelated"}
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -987,7 +987,7 @@ func TestProcessCIFailures_SkipCommentCIInfrastructure(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"ci-infrastructure"}
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1004,7 +1004,7 @@ func TestProcessCIFailures_SkipCommentCIInfrastructure(t *testing.T) {
 	}
 
 	// State should still be updated
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work.LastCIStatus != "infrastructure-failure" {
 		t.Errorf("expected LastCIStatus 'infrastructure-failure', got %q", work.LastCIStatus)
 	}
@@ -1030,7 +1030,7 @@ func TestProcessCIFailures_SkipCommentFlaky(t *testing.T) {
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"flaky"}
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1075,7 +1075,7 @@ func TestProcessCIFailures_SkipsDuplicateFlakyIssue(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1124,7 +1124,7 @@ func TestProcessCIFailures_TitlePreCheckSkipsLLMMatching(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1173,7 +1173,7 @@ func TestProcessCIFailures_CreatesNewFlakyIssueWhenNoDuplicate(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1222,7 +1222,7 @@ func TestProcessCIFailures_CreatesIssueWhenClaudeSaysNone(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.CreateFlakyIssues = true
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1305,7 +1305,7 @@ func TestProcessCIFailures_ReinvestigatesAfterNewCommits(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:      42,
 		IssueTitle:       "Fix bug",
 		PRNumber:         100,
@@ -1344,7 +1344,7 @@ func TestProcessCIFailures_SkipsAlreadyReportedAfterRestart(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1357,8 +1357,8 @@ func TestProcessCIFailures_SkipsAlreadyReportedAfterRestart(t *testing.T) {
 	if countClaudeCalls(runner.calls) != 0 {
 		t.Errorf("expected 0 claude calls (already reported via comment), got %d", countClaudeCalls(runner.calls))
 	}
-	if agent.state.ActiveIssues[42].LastCheckedCISHA != "abc1234567890" {
-		t.Errorf("expected LastCheckedCISHA to be recovered to abc1234567890, got %q", agent.state.ActiveIssues[42].LastCheckedCISHA)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCheckedCISHA != "abc1234567890" {
+		t.Errorf("expected LastCheckedCISHA to be recovered to abc1234567890, got %q", agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCheckedCISHA)
 	}
 }
 
@@ -1374,7 +1374,7 @@ func TestProcessCIFailures_NoDuplicateCommentsOnRepeatedPolls(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1429,7 +1429,7 @@ func TestProcessCIFailures_DeduplicatesUnrelatedComments(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -1448,7 +1448,7 @@ func TestProcessCIFailures_DeduplicatesUnrelatedComments(t *testing.T) {
 	}
 
 	// Verify state was updated
-	work := agent.state.ActiveIssues[42]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if work.LastCheckedCISHA != "abc123" {
 		t.Errorf("expected LastCheckedCISHA to be abc123, got %q", work.LastCheckedCISHA)
 	}
@@ -1537,7 +1537,7 @@ func TestBootstrapWatchedPRs_HappyPath(t *testing.T) {
 		t.Fatalf("expected 2 tracked PRs, got %d", len(agent.state.ActiveIssues))
 	}
 
-	work := agent.state.ActiveIssues[123]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 123)]
 	if work == nil {
 		t.Fatal("PR 123 not tracked")
 	}
@@ -1554,7 +1554,7 @@ func TestBootstrapWatchedPRs_HappyPath(t *testing.T) {
 		t.Errorf("expected title 'Fix login', got %q", work.IssueTitle)
 	}
 
-	work2 := agent.state.ActiveIssues[456]
+	work2 := agent.state.ActiveIssues[IssueKey("owner", "repo", 456)]
 	if work2 == nil {
 		t.Fatal("PR 456 not tracked")
 	}
@@ -1589,7 +1589,7 @@ func TestBootstrapWatchedPRs_SkipsAlreadyTracked(t *testing.T) {
 	agent.cfg.WatchPRs = []int{123}
 
 	// Pre-populate state
-	agent.state.ActiveIssues[123] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 123)] = &IssueWork{
 		PRNumber: 123,
 		Status:   "pr-open",
 	}
@@ -1610,7 +1610,7 @@ func TestProcessConflicts_SkipsWhenBehind(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1640,7 +1640,7 @@ func TestProcessRebase_RebasesWhenBehind(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1677,7 +1677,7 @@ func TestProcessRebase_RebasesWhenUnstableButBehind(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1707,7 +1707,7 @@ func TestProcessConflicts_SkipsUnstableNotBehind(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1733,7 +1733,7 @@ func TestProcessRebase_SkipsUnstableNotBehind(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1758,7 +1758,7 @@ func TestProcessRebase_SkipsDirty(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1790,7 +1790,7 @@ func TestProcessRebase_InvokesConflictResolutionWhenRebaseFails(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.codeAgent = codeAgent
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1873,7 +1873,7 @@ func TestProcessConflicts_SkipsCleanPR(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1900,7 +1900,7 @@ func TestProcessRebase_SkipCommentRebase(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"rebase"}
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -1936,7 +1936,7 @@ func TestProcessConflicts_SkipCommentConflict(t *testing.T) {
 
 	agent := newTestAgent(gh, runner, wt)
 	agent.cfg.SkipComments = []string{"conflict"}
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		PRNumber:     100,
 		BranchName:   "ai/issue-42",
@@ -2375,7 +2375,7 @@ func TestProcessCIFailures_DetectsCommitStatusFailures(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
@@ -2395,8 +2395,8 @@ func TestProcessCIFailures_DetectsCommitStatusFailures(t *testing.T) {
 	if claudeCalls != 1 {
 		t.Fatalf("expected 1 claude call for commit status failure, got %d", claudeCalls)
 	}
-	if agent.state.ActiveIssues[42].CIFixAttempts != 1 {
-		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[42].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].CIFixAttempts)
 	}
 }
 
@@ -2415,7 +2415,7 @@ func TestProcessCIFailures_MergesCheckRunsAndCommitStatuses(t *testing.T) {
 	wt := &mockWorktreeManager{}
 
 	agent := newTestAgent(gh, runner, wt)
-	agent.state.ActiveIssues[42] = &IssueWork{
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 42)] = &IssueWork{
 		IssueNumber:  42,
 		IssueTitle:   "Fix bug",
 		PRNumber:     100,
