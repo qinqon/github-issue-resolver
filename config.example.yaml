@@ -1,0 +1,53 @@
+# Oompa multi-project configuration
+#
+# Usage: oompa --config config.yaml
+#
+# This file defines multiple projects in a single oompa process.
+# Each project/role runs as an independent goroutine with its own
+# Agent and structured logger.
+#
+# Settings use two-tier inheritance: project-level defaults apply
+# to all roles unless overridden per-role.
+
+# Global settings
+agent: opencode
+agent-model: google-vertex-anthropic/claude-opus-4-6@default
+poll-interval: 2m
+log-level: debug
+exit-on-new-version: qinqon/oompa
+
+projects:
+  - repo: ovn-kubernetes/ovn-kubernetes
+    # Project-level defaults — inherited by all roles
+    create-flaky-issues: true
+    flaky-label: kind/ci-flake
+    prs:
+      - watch: [6252, 6229, 6118, 6306]
+        reactions: [ci, conflicts, rebase]
+        # inherits create-flaky-issues: true from project
+
+  - repo: openperouter/openperouter
+    prs:
+      - watch: [313, 304]
+        reactions: [ci, conflicts, rebase]
+        skip-comment: [ci-unrelated, ci-infrastructure]
+
+  - repo: nmstate/kubernetes-nmstate
+    fork: qinqon/kubernetes-nmstate
+    issues:
+      - only-assigned: true
+    triage:
+      - jobs:
+          - https://prow.example.com/nightly
+        schedule: "09:00 Europe/Madrid"
+        create-flaky-issues: true
+        flaky-label: ci-flake
+
+  - repo: openshift/hypershift
+    prs:
+      - watch: [8365]
+        reactions: [ci, conflicts, rebase]
+
+  - repo: qinqon/oompa
+    issues:
+      - label: good-for-ai

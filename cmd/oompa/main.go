@@ -12,6 +12,8 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/qinqon/oompa/pkg/agent"
@@ -24,17 +26,10 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-func parseIntEnv(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
-func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
+func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 	cfg = agent.Config{}
+
+	flag.StringVar(&configPath, "config", envOrDefault("OOMPA_CONFIG", ""), "Path to YAML config file for multi-project mode")
 
 	var repoFlag string
 	flag.StringVar(&repoFlag, "repo", envOrDefault("OOMPA_REPO", ""), "GitHub repo as owner/repo (e.g. ovn-kubernetes/ovn-kubernetes)")
@@ -81,7 +76,6 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 	flag.BoolVar(&cfg.CreateFlakyIssues, "create-flaky-issues", envOrDefault("OOMPA_CREATE_FLAKY_ISSUES", "") == "true", "Create issues for unrelated CI failures (opt-in)")
 	flag.StringVar(&cfg.FlakyLabel, "flaky-label", envOrDefault("OOMPA_FLAKY_LABEL", "flaky-test"), "Label to apply to flaky CI issues")
 	flag.BoolVar(&cfg.OnlyAssigned, "only-assigned", envOrDefault("OOMPA_ONLY_ASSIGNED", "") == "true", "Only process issues assigned to the agent user")
-	flag.IntVar(&cfg.MaxWorkers, "max-workers", parseIntEnv("OOMPA_MAX_WORKERS", 1), "Maximum parallel Claude invocations (default 1 = sequential)")
 
 	var forkFlag string
 	flag.StringVar(&forkFlag, "fork", envOrDefault("OOMPA_FORK", ""), "Fork repo as owner/repo for pushing (e.g. qinqon/ovn-kubernetes)")
@@ -109,9 +103,38 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 
 	flag.Parse()
 
-	// Parse --repo owner/repo
+	// Parse --reviewers (needed in both single-repo and config-file mode)
+	if reviewers != "" {
+		for r := range strings.SplitSeq(reviewers, ",") {
+			r = strings.TrimSpace(r)
+			if r != "" {
+				cfg.Reviewers = append(cfg.Reviewers, r)
+			}
+		}
+	}
+
+	// In config-file mode, --repo is not required
+	if configPath != "" {
+		cfg.CloneDir = strings.TrimSuffix(cfg.CloneDir, "/")
+		cfg.LogFile = logFile
+		cfg.GitHubAppID = ghAppID
+		cfg.GitHubAppInstallationID = ghAppInstallationID
+		if key := os.Getenv("GITHUB_APP_PRIVATE_KEY"); key != "" {
+			cfg.GitHubAppPrivateKey = []byte(key)
+		} else if ghAppPrivateKeyPath != "" {
+			keyBytes, err := os.ReadFile(ghAppPrivateKeyPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed to read private key file %s: %v\n", ghAppPrivateKeyPath, err)
+				os.Exit(1)
+			}
+			cfg.GitHubAppPrivateKey = keyBytes
+		}
+		return cfg, exitOnNewVersion, configPath
+	}
+
+	// Single-repo mode: --repo is required
 	if repoFlag == "" {
-		fmt.Fprintln(os.Stderr, "--repo is required (format: owner/repo)")
+		fmt.Fprintln(os.Stderr, "--repo is required (format: owner/repo) or use --config for multi-project mode")
 		os.Exit(1)
 	}
 	if parts := strings.SplitN(repoFlag, "/", 2); len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -152,15 +175,6 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 	}
 
 	cfg.LogFile = logFile
-
-	if reviewers != "" {
-		for r := range strings.SplitSeq(reviewers, ",") {
-			r = strings.TrimSpace(r)
-			if r != "" {
-				cfg.Reviewers = append(cfg.Reviewers, r)
-			}
-		}
-	}
 
 	if watchPRs != "" {
 		for s := range strings.SplitSeq(watchPRs, ",") {
@@ -224,7 +238,7 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion string) {
 		}
 	}
 
-	return cfg, exitOnNewVersion //nolint:nakedret // named results used for gocritic
+	return cfg, exitOnNewVersion, "" //nolint:nakedret // named results used for gocritic
 }
 
 func parseDuration(s string) time.Duration {
@@ -292,46 +306,30 @@ func shouldExitForNewVersion(ctx context.Context, ghClient *agent.GoGitHubClient
 	return false
 }
 
-func main() {
-	cfg, exitOnNewVersion := parseConfig()
-
-	// Validate agent backend
-	if cfg.Agent != "claudecode" && cfg.Agent != "opencode" {
-		fmt.Fprintf(os.Stderr, "invalid --agent %q: must be claudecode or opencode\n", cfg.Agent)
-		os.Exit(1)
+// setupGCPCredentials writes inline GCP credentials to a temp file if provided.
+func setupGCPCredentials(logger *slog.Logger) func() {
+	gcpJSON := os.Getenv("GCP_CREDENTIALS_JSON")
+	if gcpJSON == "" {
+		return func() {}
 	}
-
-	// Validate --agent-model is only used with opencode
-	if cfg.AgentModel != "" && cfg.Agent != "opencode" {
-		fmt.Fprintln(os.Stderr, "--agent-model can only be used with --agent opencode")
-		os.Exit(1)
+	f, err := os.CreateTemp("", "gcp-credentials-*.json")
+	if err != nil {
+		logger.Error("failed to create temp file for GCP credentials", "error", err)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
 	}
-
-	logger, closeLog := setupLogger(cfg.LogLevel, cfg.LogFile)
-	defer closeLog()
-
-	// If GCP credentials JSON is provided inline, write to a temp file
-	// so GOOGLE_APPLICATION_CREDENTIALS can reference it.
-	if gcpJSON := os.Getenv("GCP_CREDENTIALS_JSON"); gcpJSON != "" {
-		f, err := os.CreateTemp("", "gcp-credentials-*.json")
-		if err != nil {
-			logger.Error("failed to create temp file for GCP credentials", "error", err)
-			os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
-		}
-		defer os.Remove(f.Name())
-		if _, err := f.Write([]byte(gcpJSON)); err != nil {
-			f.Close()
-			logger.Error("failed to write GCP credentials", "error", err)
-			os.Exit(1)
-		}
+	if _, err := f.Write([]byte(gcpJSON)); err != nil {
 		f.Close()
-		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", f.Name())
+		logger.Error("failed to write GCP credentials", "error", err)
+		os.Exit(1)
 	}
+	f.Close()
+	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", f.Name())
+	return func() { os.Remove(f.Name()) }
+}
 
-	useAppAuth := cfg.GitHubAppID != 0 && len(cfg.GitHubAppPrivateKey) > 0 && cfg.GitHubAppInstallationID != 0
-
-	var ghClient *agent.GoGitHubClient
-	var tokenFunc func(context.Context) (string, error)
+// setupAuth configures GitHub authentication and returns the client, token func, and updated config.
+func setupAuth(cfg *agent.Config, logger *slog.Logger) (ghClient *agent.GoGitHubClient, tokenFunc func(context.Context) (string, error), useAppAuth bool) {
+	useAppAuth = cfg.GitHubAppID != 0 && len(cfg.GitHubAppPrivateKey) > 0 && cfg.GitHubAppInstallationID != 0
 
 	if useAppAuth {
 		appAuth, err := agent.NewGitHubAppAuth(cfg.GitHubAppID, cfg.GitHubAppInstallationID, cfg.GitHubAppPrivateKey)
@@ -354,7 +352,6 @@ func main() {
 			cfg.SignedOffBy = fmt.Sprintf("%s <%s>", appAuth.Name, appAuth.Email)
 		}
 
-		// Get an initial token for GH_TOKEN and git credential helpers
 		token, err := appAuth.TokenFunc(context.Background())
 		if err != nil {
 			logger.Error("failed to get initial installation token", "error", err)
@@ -367,7 +364,6 @@ func main() {
 	} else {
 		token := os.Getenv("GITHUB_TOKEN")
 		if token == "" {
-			// Fallback: get token from gh auth if GITHUB_TOKEN is not set
 			const ghTokenTimeout = 10 * time.Second
 			ctx, cancel := context.WithTimeout(context.Background(), ghTokenTimeout)
 			defer cancel()
@@ -380,14 +376,13 @@ func main() {
 		}
 		if token == "" {
 			logger.Error("GITHUB_TOKEN is required, or run 'gh auth login' (or configure GitHub App auth with --github-app-id, --github-app-private-key/GITHUB_APP_PRIVATE_KEY, --github-app-installation-id)")
-			os.Exit(1)
+			os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
 		}
 		cfg.GitHubToken = token
 		os.Setenv("GH_TOKEN", token)
 
 		ghClient = agent.NewGoGitHubClient(token)
 		if cfg.GitHubUser != "" && cfg.GitAuthorName != "" && cfg.GitAuthorEmail != "" {
-			// Identity provided via flags/env vars (e.g. GitHub Actions with app installation token)
 			if cfg.ForkOwner != "" {
 				cfg.GitHubHeadOwner = cfg.ForkOwner
 			} else {
@@ -399,7 +394,7 @@ func main() {
 			logger.Info("using provided identity", "login", cfg.GitHubUser, "signed-off-by", cfg.SignedOffBy)
 		} else if login, name, email, err := ghClient.GetAuthenticatedUser(context.Background()); err == nil {
 			cfg.GitHubUser = login
-			cfg.GitHubHeadOwner = login // PAT pushes to user's fork
+			cfg.GitHubHeadOwner = login
 			cfg.GitAuthorName = name
 			cfg.GitAuthorEmail = email
 			if cfg.SignedOffBy == "" {
@@ -412,16 +407,27 @@ func main() {
 		}
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
+	return ghClient, tokenFunc, useAppAuth
+}
 
-	// Build initial state from GitHub
-	logger.Info("rebuilding state from GitHub...")
-	state := agent.BuildStateFromGitHub(ctx, ghClient, cfg, cfg.CloneDir, logger)
-	logger.Info("state rebuilt", "active-issues", len(state.ActiveIssues))
+// selectCodeAgent returns the appropriate CodeAgent implementation.
+func selectCodeAgent(cfg agent.Config, logger *slog.Logger) agent.CodeAgent {
+	switch cfg.Agent {
+	case "claudecode":
+		return &agent.ClaudeCodeAgent{}
+	case "opencode":
+		return &agent.OpenCodeAgent{Model: cfg.AgentModel}
+	default:
+		logger.Error("unsupported agent backend", "agent", cfg.Agent)
+		os.Exit(1)
+		return nil
+	}
+}
 
+// buildAgentForConfig creates a fully wired Agent for a given config.
+func buildAgentForConfig(cfg agent.Config, ghClient *agent.GoGitHubClient, tokenFunc func(context.Context) (string, error), useAppAuth bool, logger *slog.Logger) *agent.Agent {
 	repoURL := fmt.Sprintf("https://github.com/%s/%s.git", cfg.Owner, cfg.Repo)
-	forkURL := repoURL // default: same-repo workflow
+	forkURL := repoURL
 	if cfg.ForkOwner != "" {
 		forkRepoName := cfg.ForkRepo
 		if forkRepoName == "" {
@@ -439,42 +445,39 @@ func main() {
 		wtm.SetGitIdentity(cfg.GitAuthorName, cfg.GitAuthorEmail)
 	}
 
-	// Select the coding agent backend
-	var codeAgent agent.CodeAgent
-	switch cfg.Agent {
-	case "claudecode":
-		codeAgent = &agent.ClaudeCodeAgent{}
-	case "opencode":
-		codeAgent = &agent.OpenCodeAgent{Model: cfg.AgentModel}
-	default:
-		logger.Error("unsupported agent backend", "agent", cfg.Agent)
-		os.Exit(1)
-	}
+	codeAgent := selectCodeAgent(cfg, logger)
 
-	// Wrap the GitHub client for dry-run mode (logs writes instead of executing)
 	var agentGH agent.GitHubClient = ghClient
 	if cfg.DryRun {
 		agentGH = agent.NewDryRunGitHubClient(ghClient, logger)
 	}
 
-	a := agent.NewAgent(
-		agentGH,
-		runner,
-		wtm,
-		state,
-		cfg,
-		logger,
-		codeAgent,
-	)
+	state := agent.BuildStateFromGitHub(context.Background(), ghClient, cfg, cfg.CloneDir, logger)
 
+	a := agent.NewAgent(agentGH, runner, wtm, state, cfg, logger, codeAgent)
 	if tokenFunc != nil {
 		a.SetTokenFunc(tokenFunc)
 	}
 
-	// Parse exit-on-new-version flag and set version for comment watermarks
-	var exitOnNewVersionOwner, exitOnNewVersionRepo string
+	return a
+}
+
+func main() {
+	cfg, exitOnNewVersion, configPath := parseConfig()
+
+	logger, closeLog := setupLogger(cfg.LogLevel, cfg.LogFile)
+	defer closeLog()
+
+	cleanupGCP := setupGCPCredentials(logger)
+	defer cleanupGCP()
+
+	ghClient, tokenFunc, useAppAuth := setupAuth(&cfg, logger)
+
 	commitSHA := getCommitSHA()
 	cfg.Version = commitSHA
+
+	// Parse exit-on-new-version
+	var exitOnNewVersionOwner, exitOnNewVersionRepo string
 	if exitOnNewVersion != "" {
 		if parts := strings.SplitN(exitOnNewVersion, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			exitOnNewVersionOwner = parts[0]
@@ -490,14 +493,39 @@ func main() {
 		}
 	}
 
-	logger.Info("starting oompa",
+	if configPath != "" {
+		// Multi-project mode
+		runMultiProject(cfg, configPath, ghClient, tokenFunc, useAppAuth, exitOnNewVersionOwner, exitOnNewVersionRepo, commitSHA, logger)
+	} else {
+		// Single-repo mode (backward compatible)
+		runSingleRepo(cfg, ghClient, tokenFunc, useAppAuth, exitOnNewVersionOwner, exitOnNewVersionRepo, commitSHA, logger)
+	}
+}
+
+// runSingleRepo runs the original single-repo mode.
+func runSingleRepo(cfg agent.Config, ghClient *agent.GoGitHubClient, tokenFunc func(context.Context) (string, error), useAppAuth bool, exitOwner, exitRepo, commitSHA string, logger *slog.Logger) {
+	// Validate agent backend
+	if cfg.Agent != "claudecode" && cfg.Agent != "opencode" {
+		fmt.Fprintf(os.Stderr, "invalid --agent %q: must be claudecode or opencode\n", cfg.Agent)
+		os.Exit(1)
+	}
+	if cfg.AgentModel != "" && cfg.Agent != "opencode" {
+		fmt.Fprintln(os.Stderr, "--agent-model can only be used with --agent opencode")
+		os.Exit(1)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	logger.Info("starting oompa (single-repo mode)",
 		"owner", cfg.Owner,
 		"repo", cfg.Repo,
 		"label", cfg.Label,
 		"poll-interval", cfg.PollInterval,
 		"dry-run", cfg.DryRun,
-		"auth-mode", map[bool]string{true: "github-app", false: "pat"}[useAppAuth],
 	)
+
+	a := buildAgentForConfig(cfg, ghClient, tokenFunc, useAppAuth, logger)
 
 	runLoop(ctx, a, logger)
 
@@ -515,9 +543,174 @@ func main() {
 			return
 		case <-ticker.C:
 			runLoop(ctx, a, logger)
-			if exitOnNewVersionOwner != "" && commitSHA != "" && shouldExitForNewVersion(ctx, ghClient, exitOnNewVersionOwner, exitOnNewVersionRepo, commitSHA, logger) {
+			if exitOwner != "" && commitSHA != "" && shouldExitForNewVersion(ctx, ghClient, exitOwner, exitRepo, commitSHA, logger) {
 				return
 			}
+		}
+	}
+}
+
+// runMultiProject runs the multi-project orchestrator with per-role goroutines.
+func runMultiProject(globalCfg agent.Config, configPath string, ghClient *agent.GoGitHubClient, tokenFunc func(context.Context) (string, error), useAppAuth bool, exitOwner, exitRepo, commitSHA string, logger *slog.Logger) {
+	fc, err := agent.LoadFileConfig(configPath)
+	if err != nil {
+		logger.Error("failed to load config file", "path", configPath, "error", err)
+		os.Exit(1)
+	}
+
+	// Apply file-level overrides to global config
+	if fc.LogLevel != "" {
+		globalCfg.LogLevel = fc.LogLevel
+		// Re-create logger with new level
+		var closeLog func()
+		logger, closeLog = setupLogger(globalCfg.LogLevel, globalCfg.LogFile)
+		defer closeLog()
+	}
+
+	// Override exit-on-new-version from file config
+	if fc.ExitOnNewVersion != "" && exitOwner == "" {
+		if parts := strings.SplitN(fc.ExitOnNewVersion, "/", 2); len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			exitOwner = parts[0]
+			exitRepo = parts[1]
+			if commitSHA == "" {
+				logger.Warn("exit-on-new-version set but no VCS revision found (dev build), version check disabled")
+			} else {
+				logger.Info("version check enabled", "repo", fc.ExitOnNewVersion, "current-sha", commitSHA)
+			}
+		}
+	}
+
+	baseCloneDir := globalCfg.CloneDir
+	entries := agent.BuildRoleEntries(fc, baseCloneDir, globalCfg)
+
+	if len(entries) == 0 {
+		logger.Error("no role entries generated from config file")
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
+	}
+
+	logger.Info("starting oompa (multi-project mode)",
+		"projects", len(fc.Projects),
+		"goroutines", len(entries),
+		"config", configPath,
+	)
+
+	// Two-signal graceful shutdown:
+	// First signal: cancel context → goroutines finish current cycle → clean exit
+	// Second signal: force exit immediately
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		logger.Info("received signal, initiating graceful shutdown", "signal", sig)
+		cancel()
+
+		sig = <-sigCh
+		logger.Error("received second signal, forcing exit", "signal", sig)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional force exit
+	}()
+
+	var wg sync.WaitGroup
+
+	for _, entry := range entries {
+		wg.Add(1)
+		roleLogger := agent.NewRoleLogger(logger, entry)
+
+		// Capture for goroutine
+		entry := entry
+
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					roleLogger.Error("panic recovered in role goroutine", "panic", r)
+				}
+			}()
+
+			a := buildAgentForConfig(entry.Config, ghClient, tokenFunc, useAppAuth, roleLogger)
+
+			roleLogger.Info("role goroutine started")
+
+			if entry.Role == "triage" && entry.Schedule != "" {
+				// Triage with scheduling: sleep until next run time
+				runScheduledTriage(ctx, a, entry, roleLogger, ghClient, exitOwner, exitRepo, commitSHA, cancel)
+			} else {
+				// Standard poll loop
+				runRoleLoop(ctx, a, entry, roleLogger, ghClient, exitOwner, exitRepo, commitSHA, cancel)
+			}
+
+			roleLogger.Info("role goroutine stopped")
+		}()
+	}
+
+	wg.Wait()
+	logger.Info("all role goroutines stopped, exiting")
+}
+
+// runRoleLoop runs the poll loop for a single role goroutine.
+func runRoleLoop(ctx context.Context, a *agent.Agent, entry agent.RoleEntry, logger *slog.Logger, ghClient *agent.GoGitHubClient, exitOwner, exitRepo, commitSHA string, cancel context.CancelFunc) {
+	runLoop(ctx, a, logger)
+
+	if entry.Config.OneShot {
+		return
+	}
+
+	ticker := time.NewTicker(entry.Config.PollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runLoop(ctx, a, logger)
+			if exitOwner != "" && commitSHA != "" && shouldExitForNewVersion(ctx, ghClient, exitOwner, exitRepo, commitSHA, logger) {
+				cancel() // cancel the shared context → all goroutines stop
+				return
+			}
+		}
+	}
+}
+
+// runScheduledTriage runs triage on a schedule instead of a fixed poll interval.
+func runScheduledTriage(ctx context.Context, a *agent.Agent, entry agent.RoleEntry, logger *slog.Logger, ghClient *agent.GoGitHubClient, exitOwner, exitRepo, commitSHA string, cancel context.CancelFunc) {
+	for {
+		next, err := agent.ParseSchedule(entry.Schedule, time.Now())
+		if err != nil {
+			logger.Error("failed to parse schedule, falling back to poll interval", "error", err)
+			// Fall back to standard poll interval
+			timer := time.NewTimer(entry.Config.PollInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		} else {
+			sleepDuration := time.Until(next)
+			logger.Info("next triage run scheduled", "next", next.Format(time.RFC3339), "sleep", sleepDuration.Round(time.Second))
+			timer := time.NewTimer(sleepDuration)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+
+		// Run the triage
+		runLoop(ctx, a, logger)
+
+		if entry.Config.OneShot {
+			return
+		}
+
+		// Check for new version after each triage run
+		if exitOwner != "" && commitSHA != "" && shouldExitForNewVersion(ctx, ghClient, exitOwner, exitRepo, commitSHA, logger) {
+			cancel() // cancel the shared context → all goroutines stop
+			return
 		}
 	}
 }

@@ -420,7 +420,7 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work, ok := agent.state.ActiveIssues[42]
+	work, ok := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]
 	if !ok {
 		t.Fatal("issue 42 should be in state after processing")
 	}
@@ -468,8 +468,8 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 	}
 
 	// Verify lastCommentID was updated
-	if agent.state.ActiveIssues[42].LastCommentID != commentID {
-		t.Errorf("expected lastCommentID %d, got %d", commentID, agent.state.ActiveIssues[42].LastCommentID)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID != commentID {
+		t.Errorf("expected lastCommentID %d, got %d", commentID, agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].LastCommentID)
 	}
 
 	// Verify Claude was invoked again
@@ -501,12 +501,12 @@ func TestIntegration_FullIssueLifecycle(t *testing.T) {
 	}
 
 	// === Phase 4: PR merged, cleanup ===
-	worktreePath := agent.state.ActiveIssues[42].WorktreePath
+	worktreePath := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)].WorktreePath
 	gh.mergePR(work.PRNumber)
 
 	agent.CleanupDone(ctx)
 
-	if _, exists := agent.state.ActiveIssues[42]; exists {
+	if _, exists := agent.state.ActiveIssues[IssueKey("owner", "repo", 42)]; exists {
 		t.Error("issue 42 should be removed from state after merge")
 	}
 
@@ -541,7 +541,7 @@ func TestIntegration_ClaudeFailure(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 
 	// Verify failure state
-	work := agent.state.ActiveIssues[99]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 99)]
 	if work == nil {
 		t.Fatal("issue 99 should be in state")
 	}
@@ -601,7 +601,7 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work := agent.state.ActiveIssues[10]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 10)]
 	if work == nil || work.PRNumber == 0 {
 		t.Fatal("PR should be tracked")
 	}
@@ -617,14 +617,14 @@ func TestIntegration_ClosedPRRetriggers(t *testing.T) {
 
 	agent.CleanupDone(ctx)
 
-	if _, exists := agent.state.ActiveIssues[10]; exists {
+	if _, exists := agent.state.ActiveIssues[IssueKey("owner", "repo", 10)]; exists {
 		t.Error("issue should be removed after PR closed")
 	}
 
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work = agent.state.ActiveIssues[10]
+	work = agent.state.ActiveIssues[IssueKey("owner", "repo", 10)]
 	if work == nil {
 		t.Fatal("issue 10 should be re-processed after closed PR")
 	}
@@ -663,7 +663,7 @@ func TestIntegration_ReviewerWhitelist(t *testing.T) {
 	}
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
-	prNum := agent.state.ActiveIssues[50].PRNumber
+	prNum := agent.state.ActiveIssues[IssueKey("owner", "repo", 50)].PRNumber
 
 	// Non-whitelisted user comments — should be ignored
 	gh.addReviewComment(prNum, "random-bot", "do something", "fix.go", 1)
@@ -737,7 +737,7 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work := agent.state.ActiveIssues[77]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 77)]
 	if work == nil {
 		t.Fatal("issue 77 should be in state")
 	}
@@ -749,20 +749,20 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 
 	// First fix attempt
 	agent.ProcessCIFailures(ctx)
-	if agent.state.ActiveIssues[77].CIFixAttempts != 1 {
-		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts)
 	}
 
 	// CI still fails — second attempt
 	agent.ProcessCIFailures(ctx)
-	if agent.state.ActiveIssues[77].CIFixAttempts != 2 {
-		t.Errorf("expected 2 CI fix attempts, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts != 2 {
+		t.Errorf("expected 2 CI fix attempts, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts)
 	}
 
 	// CI still fails — third attempt
 	agent.ProcessCIFailures(ctx)
-	if agent.state.ActiveIssues[77].CIFixAttempts != 3 {
-		t.Errorf("expected 3 CI fix attempts, got %d", agent.state.ActiveIssues[77].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts != 3 {
+		t.Errorf("expected 3 CI fix attempts, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts)
 	}
 
 	// Fourth attempt — should be blocked, comment posted
@@ -803,8 +803,8 @@ func TestIntegration_CIFailureFixAndRetryLimit(t *testing.T) {
 		{ID: 2, Name: "test", Status: "completed", Conclusion: "success"},
 	})
 	// Reset attempts to simulate a fresh state after human fix
-	agent.state.ActiveIssues[77].CIFixAttempts = 0
-	agent.state.ActiveIssues[77].LastCIStatus = ""
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].CIFixAttempts = 0
+	agent.state.ActiveIssues[IssueKey("owner", "repo", 77)].LastCIStatus = ""
 
 	runner.mu.Lock()
 	callsBefore = len(runner.calls)
@@ -857,7 +857,7 @@ func TestIntegration_SyncWorktreePullsManualCommits(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work := agent.state.ActiveIssues[88]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 88)]
 	if work == nil {
 		t.Fatal("issue 88 should be in state")
 	}
@@ -922,7 +922,7 @@ func TestIntegration_CIFailureAfterNewPush(t *testing.T) {
 	agent.ProcessNewIssues(ctx)
 	runner.onClaudeRun = nil
 
-	work := agent.state.ActiveIssues[91]
+	work := agent.state.ActiveIssues[IssueKey("owner", "repo", 91)]
 	if work == nil {
 		t.Fatal("issue 91 should be in state")
 	}
@@ -935,8 +935,8 @@ func TestIntegration_CIFailureAfterNewPush(t *testing.T) {
 
 	// First CI fix attempt
 	agent.ProcessCIFailures(ctx)
-	if agent.state.ActiveIssues[91].CIFixAttempts != 1 {
-		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[91].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 91)].CIFixAttempts != 1 {
+		t.Errorf("expected 1 CI fix attempt, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 91)].CIFixAttempts)
 	}
 
 	// Simulate a new push to the PR (force push or new commit by human/external process)
@@ -951,12 +951,12 @@ func TestIntegration_CIFailureAfterNewPush(t *testing.T) {
 	agent.ProcessCIFailures(ctx)
 
 	// Verify that attempts counter was reset to 0 and then incremented to 1 (fresh investigation)
-	if agent.state.ActiveIssues[91].CIFixAttempts != 1 {
-		t.Errorf("expected CI fix attempts to be reset to 1 after new push, got %d", agent.state.ActiveIssues[91].CIFixAttempts)
+	if agent.state.ActiveIssues[IssueKey("owner", "repo", 91)].CIFixAttempts != 1 {
+		t.Errorf("expected CI fix attempts to be reset to 1 after new push, got %d", agent.state.ActiveIssues[IssueKey("owner", "repo", 91)].CIFixAttempts)
 	}
 
 	// Verify the agent investigated the new SHA
-	work = agent.state.ActiveIssues[91]
+	work = agent.state.ActiveIssues[IssueKey("owner", "repo", 91)]
 	currentSHA, _ := ghClient.GetPRHeadSHA(ctx, "owner", "repo", prNum)
 	if work.LastCheckedCISHA != currentSHA {
 		t.Errorf("expected LastCheckedCISHA to be updated to %s, got %s", currentSHA, work.LastCheckedCISHA)

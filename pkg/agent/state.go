@@ -9,16 +9,22 @@ import (
 	"time"
 )
 
+// IssueKey returns the composite state key for an issue or PR number.
+// Format: "owner/repo#number" for cross-repo safety.
+func IssueKey(owner, repo string, number int) string {
+	return fmt.Sprintf("%s/%s#%d", owner, repo, number)
+}
+
 // State holds all active issue work in memory.
 type State struct {
-	ActiveIssues     map[int]*IssueWork
-	InvestigatedRuns map[string]bool // jobName:runID -> true
+	ActiveIssues     map[string]*IssueWork // key: "owner/repo#number"
+	InvestigatedRuns map[string]bool       // jobName:runID -> true
 }
 
 // NewState creates an empty state.
 func NewState() *State {
 	return &State{
-		ActiveIssues:     make(map[int]*IssueWork),
+		ActiveIssues:     make(map[string]*IssueWork),
 		InvestigatedRuns: make(map[string]bool),
 	}
 }
@@ -96,7 +102,7 @@ func BuildStateFromGitHub(ctx context.Context, gh GitHubClient, cfg Config, clon
 				}
 			}
 
-			state.ActiveIssues[issue.Number] = work
+			state.ActiveIssues[IssueKey(cfg.Owner, cfg.Repo, issue.Number)] = work
 		}
 	}
 
@@ -133,7 +139,7 @@ func BuildStateFromGitHub(ctx context.Context, gh GitHubClient, cfg Config, clon
 			CreatedAt:    time.Now(),
 		}
 
-		state.ActiveIssues[prNumber] = work
+		state.ActiveIssues[IssueKey(cfg.Owner, cfg.Repo, prNumber)] = work
 		logger.Info("recovered watched PR state", "pr", prNumber, "branch", pr.Head)
 	}
 
