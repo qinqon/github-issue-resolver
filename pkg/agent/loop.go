@@ -102,8 +102,12 @@ func (a *Agent) RefreshToken(ctx context.Context) error {
 
 // runSequential executes a function on each item sequentially.
 // Each role entry runs within its own goroutine, so no worker pool is needed.
+// Stops early if the context is cancelled (e.g. during graceful shutdown).
 func runSequential[T any](ctx context.Context, items []T, fn func(context.Context, T)) {
 	for _, item := range items {
+		if ctx.Err() != nil {
+			return
+		}
 		fn(ctx, item)
 	}
 }
@@ -633,7 +637,7 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 		// Priority: INFRASTRUCTURE > UNRELATED > RELATED (check in this order
 		// so RELATED doesn't match the "UNRELATED" substring).
 		foundKeyword := ""
-		for _, line := range strings.Split(cleaned, "\n") {
+		for line := range strings.SplitSeq(cleaned, "\n") {
 			trimmed := strings.TrimLeft(strings.TrimSpace(line), "*_-—:>")
 			switch {
 			case strings.HasPrefix(trimmed, "INFRASTRUCTURE"):
@@ -769,20 +773,20 @@ func (a *Agent) ProcessCIFailures(ctx context.Context) {
 						if matchErr != nil {
 							a.logger.Warn("failed to run agent for flaky issue matching", "error", matchErr)
 						} else {
-						matchResponse := strings.TrimSpace(matchResult.Result)
-						if matchedNum, ok := parseFlakyMatch(matchResponse); ok {
-							for _, existing := range existingIssues {
-								if existing.Number == matchedNum {
-									issueNum = matchedNum
-									break
+							matchResponse := strings.TrimSpace(matchResult.Result)
+							if matchedNum, ok := parseFlakyMatch(matchResponse); ok {
+								for _, existing := range existingIssues {
+									if existing.Number == matchedNum {
+										issueNum = matchedNum
+										break
+									}
+								}
+								if issueNum > 0 {
+									a.logger.Info("agent matched existing flaky CI issue", "issue", issueNum, "check", task.failures[0].Name)
+								} else {
+									a.logger.Warn("agent returned MATCH for unknown issue", "matched_issue", matchedNum, "check", task.failures[0].Name)
 								}
 							}
-							if issueNum > 0 {
-								a.logger.Info("agent matched existing flaky CI issue", "issue", issueNum, "check", task.failures[0].Name)
-							} else {
-								a.logger.Warn("agent returned MATCH for unknown issue", "matched_issue", matchedNum, "check", task.failures[0].Name)
-							}
-						}
 						}
 					}
 
@@ -1418,8 +1422,8 @@ func parseFlakyMatch(response string) (int, bool) {
 func parseFailingTest(explanation string) string {
 	for line := range strings.SplitSeq(explanation, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "FAILING_TEST:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "FAILING_TEST:"))
+		if after, ok := strings.CutPrefix(line, "FAILING_TEST:"); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""
@@ -1759,12 +1763,10 @@ func (a *Agent) resolveConflictsParallel(ctx context.Context, tasks []conflictTa
 			// Post a hidden marker so deduplication skips this SHA on the next cycle
 			_ = a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
 				fmt.Sprintf("<!-- oompa-bot rebase:%s -->", shortSHA(task.headSHA)))
-		} else {
-			if !a.ShouldSkipComment("conflict") {
-				if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
-					fmt.Sprintf("Rebased commit %s on main and pushed (conflicts resolved).\n\n%s", shortSHA(task.headSHA), a.botComment())); err != nil {
-					a.logger.Error("failed to log success to github", "pr", task.work.PRNumber, "error", err)
-				}
+		} else if !a.ShouldSkipComment("conflict") {
+			if err := a.gh.AddIssueComment(ctx, a.cfg.Owner, a.cfg.Repo, task.work.PRNumber,
+				fmt.Sprintf("Rebased commit %s on main and pushed (conflicts resolved).\n\n%s", shortSHA(task.headSHA), a.botComment())); err != nil {
+				a.logger.Error("failed to log success to github", "pr", task.work.PRNumber, "error", err)
 			}
 		}
 	})

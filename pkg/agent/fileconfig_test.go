@@ -94,7 +94,7 @@ projects: []
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -111,7 +111,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -126,7 +126,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -143,7 +143,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -160,7 +160,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -178,7 +178,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -196,7 +196,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -211,7 +211,7 @@ func TestBuildRoleEntries_TwoTierInheritance(t *testing.T) {
 		Projects: []ProjectConfig{
 			{
 				Repo:              "owner/repo",
-				CreateFlakyIssues: boolPtr(true),
+				CreateFlakyIssues: new(true),
 				FlakyLabel:        "kind/flaky",
 				SkipComment:       []string{"ci-unrelated"},
 				PRs: []PRsRoleConfig{
@@ -221,8 +221,8 @@ func TestBuildRoleEntries_TwoTierInheritance(t *testing.T) {
 					},
 					{
 						Watch:             []int{300},
-						CreateFlakyIssues: boolPtr(false), // Override
-						FlakyLabel:        "override",     // Override
+						CreateFlakyIssues: new(false),                    // Override
+						FlakyLabel:        "override",                    // Override
 						SkipComment:       []string{"ci-infrastructure"}, // Override
 					},
 				},
@@ -342,7 +342,7 @@ func TestBuildRoleEntries_ForkInheritance(t *testing.T) {
 				Fork: "myfork/repo",
 				PRs:  []PRsRoleConfig{{Watch: []int{1}}},
 				Issues: []IssuesRoleConfig{
-					{Label: "ai"},                                // Inherits project fork
+					{Label: "ai"}, // Inherits project fork
 					{Label: "special", Fork: "otherfork/myrepo"}, // Overrides fork
 				},
 			},
@@ -539,7 +539,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -557,7 +557,7 @@ func TestLoadFileConfig_FileNotFound(t *testing.T) {
 func TestLoadFileConfig_InvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte("{{invalid yaml"), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte("{{invalid yaml"), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -576,7 +576,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -594,7 +594,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -612,7 +612,7 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err == nil {
@@ -630,10 +630,29 @@ projects:
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
 
 	_, err := LoadFileConfig(path)
 	if err != nil {
 		t.Fatalf("unexpected error for valid schedule: %v", err)
+	}
+}
+
+func TestLoadFileConfig_UnknownKeysRejected(t *testing.T) {
+	yaml := `
+agent: opencode
+unknown-field: some-value
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	os.WriteFile(path, []byte(yaml), 0o644) //nolint:errcheck // test helper: WriteFile errors are caught by subsequent LoadFileConfig
+
+	_, err := LoadFileConfig(path)
+	if err == nil {
+		t.Fatal("expected error for unknown YAML key")
 	}
 }

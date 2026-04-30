@@ -103,6 +103,16 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 
 	flag.Parse()
 
+	// Parse --reviewers (needed in both single-repo and config-file mode)
+	if reviewers != "" {
+		for r := range strings.SplitSeq(reviewers, ",") {
+			r = strings.TrimSpace(r)
+			if r != "" {
+				cfg.Reviewers = append(cfg.Reviewers, r)
+			}
+		}
+	}
+
 	// In config-file mode, --repo is not required
 	if configPath != "" {
 		cfg.CloneDir = strings.TrimSuffix(cfg.CloneDir, "/")
@@ -165,15 +175,6 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 	}
 
 	cfg.LogFile = logFile
-
-	if reviewers != "" {
-		for r := range strings.SplitSeq(reviewers, ",") {
-			r = strings.TrimSpace(r)
-			if r != "" {
-				cfg.Reviewers = append(cfg.Reviewers, r)
-			}
-		}
-	}
 
 	if watchPRs != "" {
 		for s := range strings.SplitSeq(watchPRs, ",") {
@@ -375,7 +376,7 @@ func setupAuth(cfg *agent.Config, logger *slog.Logger) (ghClient *agent.GoGitHub
 		}
 		if token == "" {
 			logger.Error("GITHUB_TOKEN is required, or run 'gh auth login' (or configure GitHub App auth with --github-app-id, --github-app-private-key/GITHUB_APP_PRIVATE_KEY, --github-app-installation-id)")
-			os.Exit(1)
+			os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
 		}
 		cfg.GitHubToken = token
 		os.Setenv("GH_TOKEN", token)
@@ -584,7 +585,7 @@ func runMultiProject(globalCfg agent.Config, configPath string, ghClient *agent.
 
 	if len(entries) == 0 {
 		logger.Error("no role entries generated from config file")
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
 	}
 
 	logger.Info("starting oompa (multi-project mode)",

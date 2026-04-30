@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,8 +25,8 @@ type FileConfig struct {
 
 // ProjectConfig represents a single project in the YAML config.
 type ProjectConfig struct {
-	Repo   string `yaml:"repo"` // "owner/repo"
-	Fork   string `yaml:"fork"` // "owner/repo" for fork
+	Repo string `yaml:"repo"` // "owner/repo"
+	Fork string `yaml:"fork"` // "owner/repo" for fork
 
 	// Project-level defaults (inherited by roles unless overridden)
 	CreateFlakyIssues *bool    `yaml:"create-flaky-issues"`
@@ -81,7 +82,9 @@ func LoadFileConfig(path string) (*FileConfig, error) {
 	}
 
 	var cfg FileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
@@ -234,11 +237,6 @@ func stringsOr(s, fallback []string) []string {
 	return fallback
 }
 
-// boolPtr returns a pointer to b.
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 // RoleEntry describes a single role goroutine to run. Built from FileConfig by
 // expanding projects and roles with two-tier inheritance applied.
 type RoleEntry struct {
@@ -289,17 +287,17 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 
 		// Base config for this project (shared fields)
 		baseCfg := Config{
-			Owner:             owner,
-			Repo:              repo,
-			CloneDir:          fmt.Sprintf("%s/%s/%s", baseCloneDir, owner, repo),
-			PollInterval:      pollInterval,
-			LogLevel:          logLevel,
-			DryRun:            fc.DryRun || globalCfg.DryRun,
-			OneShot:           fc.OneShot || globalCfg.OneShot,
-			Agent:             agent,
-			AgentModel:        agentModel,
-			ForkOwner:         projForkOwner,
-			ForkRepo:          projForkRepo,
+			Owner:        owner,
+			Repo:         repo,
+			CloneDir:     fmt.Sprintf("%s/%s/%s", baseCloneDir, owner, repo),
+			PollInterval: pollInterval,
+			LogLevel:     logLevel,
+			DryRun:       fc.DryRun || globalCfg.DryRun,
+			OneShot:      fc.OneShot || globalCfg.OneShot,
+			Agent:        agent,
+			AgentModel:   agentModel,
+			ForkOwner:    projForkOwner,
+			ForkRepo:     projForkRepo,
 			// These are inherited from the global config (set by main from auth)
 			GitHubToken:     globalCfg.GitHubToken,
 			GitHubUser:      globalCfg.GitHubUser,
@@ -385,10 +383,11 @@ func ParseSchedule(schedule string, now time.Time) (time.Time, error) {
 	var weekday *time.Weekday
 	var tzName string
 
-	if len(parts) == 2 {
+	switch len(parts) {
+	case 2:
 		// "HH:MM TZ" — daily
 		tzName = parts[1]
-	} else if len(parts) == 3 {
+	case 3:
 		// "HH:MM Weekday TZ" — weekly
 		wd, err := parseWeekday(parts[1])
 		if err != nil {
@@ -396,7 +395,7 @@ func ParseSchedule(schedule string, now time.Time) (time.Time, error) {
 		}
 		weekday = &wd
 		tzName = parts[2]
-	} else {
+	default:
 		return time.Time{}, fmt.Errorf("invalid schedule %q: too many parts", schedule)
 	}
 
@@ -410,16 +409,16 @@ func ParseSchedule(schedule string, now time.Time) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid schedule %q: time must be HH:MM", schedule)
 	}
 
-	var hour, min int
+	var hour, minute int
 	if _, err := fmt.Sscanf(hourMin[0], "%d", &hour); err != nil || hour < 0 || hour > 23 {
 		return time.Time{}, fmt.Errorf("invalid schedule %q: invalid hour", schedule)
 	}
-	if _, err := fmt.Sscanf(hourMin[1], "%d", &min); err != nil || min < 0 || min > 59 {
+	if _, err := fmt.Sscanf(hourMin[1], "%d", &minute); err != nil || minute < 0 || minute > 59 {
 		return time.Time{}, fmt.Errorf("invalid schedule %q: invalid minute", schedule)
 	}
 
 	nowLocal := now.In(loc)
-	next := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), hour, min, 0, 0, loc)
+	next := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), hour, minute, 0, 0, loc)
 
 	if weekday != nil {
 		// Weekly: advance to the next matching weekday
@@ -428,11 +427,9 @@ func ParseSchedule(schedule string, now time.Time) (time.Time, error) {
 			daysUntil = 7
 		}
 		next = next.AddDate(0, 0, daysUntil)
-	} else {
+	} else if !next.After(nowLocal) {
 		// Daily: if the time has passed today, advance to tomorrow
-		if !next.After(nowLocal) {
-			next = next.AddDate(0, 0, 1)
-		}
+		next = next.AddDate(0, 0, 1)
 	}
 
 	return next, nil
