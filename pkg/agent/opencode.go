@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // OpenCodeAgent implements CodeAgent for OpenCode CLI.
 type OpenCodeAgent struct {
-	Model string // optional model override
+	Model   string        // optional model override
+	Timeout time.Duration // per-invocation timeout; 0 = unlimited
 }
 
 // opencodeEvent represents a single event in OpenCode's JSONL output.
@@ -175,5 +177,6 @@ func (o *OpenCodeAgent) Run(ctx context.Context, runner CommandRunner, workDir, 
 		args:    args,
 		logLine: logOpencodeEvent,
 		parse:   parseOpencodeResult,
+		timeout: o.Timeout,
 	})
 }

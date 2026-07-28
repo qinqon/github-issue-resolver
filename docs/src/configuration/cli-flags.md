@@ -9,6 +9,7 @@ Every flag has a corresponding environment variable. Flags take precedence over 
 | `--repo` | `OOMPA_REPO` | -- | GitHub repo as `owner/repo` (required) |
 | `--agent` | `OOMPA_AGENT` | `opencode` | Coding agent backend: `claudecode` or `opencode` |
 | `--agent-model` | `OOMPA_AGENT_MODEL` | -- | Model override for OpenCode (e.g. `google-vertex-anthropic/claude-opus-4-6@default`) |
+| `--agent-timeout` | `OOMPA_AGENT_TIMEOUT` | `30m` | Per-invocation timeout for coding agent runs (`0` = unlimited) |
 | `--label` | `OOMPA_LABEL` | `good-for-ai` | Issue label to watch |
 | `--clone-dir` | `OOMPA_CLONE_DIR` | `/tmp/oompa-work` | Working directory for clones and worktrees |
 | `--poll-interval` | `OOMPA_POLL_INTERVAL` | `2m` | How often to poll GitHub |

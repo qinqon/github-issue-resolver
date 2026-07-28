@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 )
 
 const (
@@ -60,12 +62,47 @@ func (r *ExecRunner) SetGHToken(token string) {
 // Runner-level variables are appended after the process environment;
 // os/exec documents last-wins semantics for duplicate keys, so overlay
 // values (e.g. refreshed GH_TOKEN) shadow inherited ones.
+//
+// The child is started in its own process group (Setpgid) so that context
+// cancellation kills the entire tree (coding agents spawn subprocesses).
+// A WaitDelay gives the child a short grace period after the cancel signal
+// before the I/O pipes are forcibly closed.
 func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
+
+	// Start the child in its own process group so we can kill the
+	// entire tree on context cancellation. Without this, only the
+	// direct child receives the signal and grandchildren may orphan.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Send SIGTERM to the entire process group when the context is
+	// cancelled, giving children a chance to flush output and clean up.
+	// If the process hasn't exited by WaitDelay, Go closes the I/O
+	// pipes and Wait returns — the goroutine unblocks either way.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// Send SIGTERM to the whole process group for graceful shutdown.
+		// SIGTERM (vs SIGKILL) allows the child to flush partial results
+		// (e.g. cost data) before exiting.
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		// ESRCH means the process already exited between the context
+		// cancellation check and the kill call — treat as success.
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+
+	// Give the child a brief window to handle SIGTERM and flush output
+	// before the I/O pipes are forcibly torn down.
+	cmd.WaitDelay = 5 * time.Second
+
 	r.mu.RLock()
 	if len(r.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), r.Env...)

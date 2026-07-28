@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 	"unicode/utf8"
 )
 
 // ClaudeCodeAgent implements CodeAgent for Claude Code CLI.
-type ClaudeCodeAgent struct{}
+type ClaudeCodeAgent struct {
+	Timeout time.Duration // per-invocation timeout; 0 = unlimited
+}
 
 // Run invokes Claude Code in headless mode with streaming output and parses
 // the result. If resume is true, --continue resumes the most recent session
@@ -26,6 +29,7 @@ func (c *ClaudeCodeAgent) Run(ctx context.Context, runner CommandRunner, workDir
 		args:    args,
 		logLine: logStreamEvent,
 		parse:   parseStreamResult,
+		timeout: c.Timeout,
 	})
 }
 
