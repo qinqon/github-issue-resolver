@@ -16,6 +16,7 @@ The config file defines global settings and a list of projects. Each project can
 # Global settings (apply to all projects unless overridden)
 agent: opencode
 agent-model: google-vertex-anthropic/claude-opus-4-6@default
+agent-timeout: 30m  # per-invocation timeout (0 = unlimited)
 poll-interval: 2m
 log-level: debug
 exit-on-new-version: qinqon/oompa

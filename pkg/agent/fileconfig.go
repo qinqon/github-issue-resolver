@@ -15,6 +15,7 @@ import (
 type FileConfig struct {
 	Agent            string          `yaml:"agent"`
 	AgentModel       string          `yaml:"agent-model"`
+	AgentTimeout     string          `yaml:"agent-timeout"`
 	PollInterval     string          `yaml:"poll-interval"`
 	LogLevel         string          `yaml:"log-level"`
 	ExitOnNewVersion string          `yaml:"exit-on-new-version"`
@@ -131,6 +132,16 @@ func validateFileConfig(cfg *FileConfig) error {
 	if cfg.PollInterval != "" {
 		if _, err := time.ParseDuration(cfg.PollInterval); err != nil {
 			return fmt.Errorf("invalid poll-interval %q: %w", cfg.PollInterval, err)
+		}
+	}
+
+	if cfg.AgentTimeout != "" {
+		d, err := time.ParseDuration(cfg.AgentTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid agent-timeout %q: %w", cfg.AgentTimeout, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("agent-timeout must be >= 0, got %q", cfg.AgentTimeout)
 		}
 	}
 
@@ -331,6 +342,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 	// Global defaults from FileConfig
 	agent := stringOr(fc.Agent, globalCfg.Agent)
 	agentModel := stringOr(fc.AgentModel, globalCfg.AgentModel)
+	agentTimeout := parseDurationOr(fc.AgentTimeout, globalCfg.AgentTimeout)
 	pollInterval := globalCfg.PollInterval
 	if fc.PollInterval != "" {
 		if d, err := time.ParseDuration(fc.PollInterval); err == nil {
@@ -374,6 +386,7 @@ func BuildRoleEntries(fc *FileConfig, baseCloneDir string, globalCfg Config) []R
 			OneShot:      fc.OneShot || globalCfg.OneShot,
 			Agent:        agent,
 			AgentModel:   projAgentModel,
+			AgentTimeout: agentTimeout,
 			ForkOwner:    projForkOwner,
 			ForkRepo:     projForkRepo,
 			// These are inherited from the global config (set by main from auth)

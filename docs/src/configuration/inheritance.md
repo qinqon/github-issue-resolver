@@ -51,6 +51,7 @@ projects:
 |-------|--------|---------|------|
 | `agent` | Y | - | - |
 | `agent-model` | Y | Y | - |
+| `agent-timeout` | Y | - | - |
 | `poll-interval` | Y | - | - |
 | `log-level` | Y | - | - |
 | `reviewers` | - | Y | Y |

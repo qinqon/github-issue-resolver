@@ -46,6 +46,7 @@ type Config struct {
 	MaxPRSessionCost   float64       // max cumulative agent cost per PR per session before pausing (default: 0 = unlimited)
 	SlackWebhookURL    string        // Slack Incoming Webhook URL for per-cycle reporting (empty = disabled)
 	RebaseInterval     time.Duration // minimum time between rebases (default: 4h)
+	AgentTimeout       time.Duration // per-invocation timeout for coding agent runs (default: 30m; 0 = unlimited)
 
 	// GitHub App authentication (alternative to GITHUB_TOKEN)
 	GitHubAppID             int64

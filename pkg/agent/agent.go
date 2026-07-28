@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 )
 
 // CodeAgent abstracts the CLI coding agent (Claude Code or OpenCode).
@@ -21,7 +22,12 @@ type cliAgentSpec struct {
 	args    []string
 	logLine func(logger *slog.Logger, line []byte)
 	parse   func(stdout []byte) (AgentResult, error)
+	timeout time.Duration // per-invocation timeout; 0 = unlimited
 }
+
+// watchdogInterval is the interval at which the stall watchdog logs a
+// warning while an agent invocation is in flight.
+const watchdogInterval = 5 * time.Minute
 
 // runCLIAgent invokes a CLI coding agent backend described by spec.
 // The prompt is passed via stdin to avoid hitting the OS ARG_MAX limit for
@@ -29,12 +35,47 @@ type cliAgentSpec struct {
 // runner supports it. On invocation failure the partial output is still
 // parsed so any cost it reports can be billed against session budgets
 // alongside the error (cost-only: result text never propagates on failure).
+//
+// When spec.timeout > 0, a per-invocation deadline is applied so a hung
+// child process cannot stall the goroutine forever (see #289).
 func runCLIAgent(ctx context.Context, runner CommandRunner, workDir, prompt string,
 	logger *slog.Logger, spec cliAgentSpec) (AgentResult, error) {
 	// Guard against malformed specs: a nil parser makes the invocation
 	// meaningless, and panicking would take down the whole daemon.
 	if spec.parse == nil {
 		return AgentResult{}, fmt.Errorf("cli agent spec for %q has no parser", spec.binary)
+	}
+
+	// Apply per-invocation timeout when configured.
+	if spec.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, spec.timeout)
+		defer cancel()
+	}
+
+	// Start a watchdog goroutine that logs periodic warnings while the
+	// agent is in flight. This makes hung invocations visible in the
+	// journal instead of silently blocking.
+	start := time.Now()
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	if logger != nil {
+		go func() {
+			ticker := time.NewTicker(watchdogInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-watchdogDone:
+					return
+				case <-ticker.C:
+					logger.Warn("agent still running",
+						"binary", spec.binary,
+						"elapsed", time.Since(start).Truncate(time.Second).String(),
+						"workdir", workDir,
+					)
+				}
+			}
+		}()
 	}
 
 	var stdout, stderr []byte

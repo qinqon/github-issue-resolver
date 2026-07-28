@@ -285,6 +285,50 @@ projects:
 `,
 			wantErr: true,
 		},
+		{
+			name: "valid_agent_timeout",
+			yaml: `
+agent-timeout: 30m
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid_agent_timeout",
+			yaml: `
+agent-timeout: not-a-duration
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`,
+			wantErr: true,
+		},
+		{
+			name: "negative_agent_timeout",
+			yaml: `
+agent-timeout: "-5m"
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`,
+			wantErr: true,
+		},
+		{
+			name: "zero_agent_timeout_unlimited",
+			yaml: `
+agent-timeout: "0s"
+projects:
+  - repo: owner/repo
+    issues:
+      - label: test
+`,
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1264,4 +1308,72 @@ func TestBuildRoleEntries_CloneDirsAreUniquePerEntry(t *testing.T) {
 	if entries[1].Config.CloneDir != "/tmp/work/org/repo/prs-2" {
 		t.Errorf("unexpected second prs clone dir %q", entries[1].Config.CloneDir)
 	}
+}
+
+func TestBuildRoleEntries_AgentTimeoutInheritance(t *testing.T) {
+	// agent-timeout set in FileConfig propagates to all role entries;
+	// the global CLI default (from Config) is used when the file does not
+	// specify one.
+
+	t.Run("file config overrides global default", func(t *testing.T) {
+		fc := &FileConfig{
+			AgentTimeout: "45m",
+			Projects: []ProjectConfig{
+				{
+					Repo:   "owner/repo",
+					PRs:    []PRsRoleConfig{{Watch: []int{1}}},
+					Issues: []IssuesRoleConfig{{Label: "ai"}},
+					Triage: []TriageRoleConfig{{Jobs: []string{"https://ci.example.com/job"}}},
+				},
+			},
+		}
+		globalCfg := Config{Agent: "opencode", AgentTimeout: 30 * time.Minute}
+
+		entries := BuildRoleEntries(fc, "/tmp/work", globalCfg)
+		for _, e := range entries {
+			if e.Config.AgentTimeout != 45*time.Minute {
+				t.Errorf("role %s: expected 45m agent-timeout, got %v", e.Role, e.Config.AgentTimeout)
+			}
+		}
+	})
+
+	t.Run("global default used when file omits", func(t *testing.T) {
+		fc := &FileConfig{
+			// AgentTimeout not set
+			Projects: []ProjectConfig{
+				{
+					Repo:   "owner/repo",
+					Issues: []IssuesRoleConfig{{Label: "ai"}},
+				},
+			},
+		}
+		globalCfg := Config{Agent: "opencode", AgentTimeout: 30 * time.Minute}
+
+		entries := BuildRoleEntries(fc, "/tmp/work", globalCfg)
+		for _, e := range entries {
+			if e.Config.AgentTimeout != 30*time.Minute {
+				t.Errorf("role %s: expected 30m global default, got %v", e.Role, e.Config.AgentTimeout)
+			}
+		}
+	})
+
+	t.Run("zero means unlimited", func(t *testing.T) {
+		fc := &FileConfig{
+			AgentTimeout: "0s",
+			Projects: []ProjectConfig{
+				{
+					Repo:   "owner/repo",
+					Issues: []IssuesRoleConfig{{Label: "ai"}},
+				},
+			},
+		}
+		globalCfg := Config{Agent: "opencode", AgentTimeout: 30 * time.Minute}
+
+		entries := BuildRoleEntries(fc, "/tmp/work", globalCfg)
+		for _, e := range entries {
+			if e.Config.AgentTimeout != 0 {
+				t.Errorf("role %s: expected 0 (unlimited), got %v", e.Role, e.Config.AgentTimeout)
+			}
+		}
+	})
 }

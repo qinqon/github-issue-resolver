@@ -38,6 +38,23 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 	flag.DurationVar(&cfg.PollInterval, "poll-interval", parseDuration(envOrDefault("OOMPA_POLL_INTERVAL", "2m")), "Poll frequency")
 	flag.StringVar(&cfg.Agent, "agent", envOrDefault("OOMPA_AGENT", "opencode"), "Coding agent backend: claudecode or opencode")
 	flag.StringVar(&cfg.AgentModel, "agent-model", envOrDefault("OOMPA_AGENT_MODEL", ""), "Model override for OpenCode (ignored for Claude Code)")
+
+	agentTimeoutDefault := 30 * time.Minute
+	if raw := os.Getenv("OOMPA_AGENT_TIMEOUT"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid OOMPA_AGENT_TIMEOUT %q: %v\n", raw, err)
+			os.Exit(1)
+		}
+		if d < 0 {
+			fmt.Fprintf(os.Stderr, "invalid OOMPA_AGENT_TIMEOUT %q: must be >= 0\n", raw)
+			os.Exit(1)
+		}
+		agentTimeoutDefault = d
+	}
+	flag.DurationVar(&cfg.AgentTimeout, "agent-timeout", agentTimeoutDefault,
+		"Per-invocation timeout for coding agent runs (e.g. 30m, 1h; 0 = unlimited)")
+
 	flag.StringVar(&cfg.LogLevel, "log-level", envOrDefault("OOMPA_LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
 	flag.BoolVar(&cfg.DryRun, "dry-run", false, "Log what would be done without executing")
 	flag.BoolVar(&cfg.OneShot, "one-shot", false, "Run one cycle and exit")
@@ -135,6 +152,12 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 				cfg.Reviewers = append(cfg.Reviewers, r)
 			}
 		}
+	}
+
+	// Reject negative agent timeout from --agent-timeout flag.
+	if cfg.AgentTimeout < 0 {
+		fmt.Fprintf(os.Stderr, "invalid --agent-timeout %q: must be >= 0\n", cfg.AgentTimeout)
+		os.Exit(1)
 	}
 
 	// Assign safety guard config early — needed in both single-repo and config-file modes.
@@ -450,9 +473,9 @@ func selectCodeAgent(cfg agent.Config, logger *slog.Logger) agent.CodeAgent {
 			logger.Error("agent-model can only be used with agent: opencode", "model", cfg.AgentModel)
 			os.Exit(1)
 		}
-		return &agent.ClaudeCodeAgent{}
+		return &agent.ClaudeCodeAgent{Timeout: cfg.AgentTimeout}
 	case "opencode":
-		return &agent.OpenCodeAgent{Model: cfg.AgentModel}
+		return &agent.OpenCodeAgent{Model: cfg.AgentModel, Timeout: cfg.AgentTimeout}
 	default:
 		logger.Error("unsupported agent backend", "agent", cfg.Agent)
 		os.Exit(1)
