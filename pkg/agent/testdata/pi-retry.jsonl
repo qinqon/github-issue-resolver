@@ -1,0 +1,12 @@
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.0625}}}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"overloaded","usage":{"cost":{"total":0.125}}}}
+{"type":"agent_end","messages":[{"role":"assistant","stopReason":"error","usage":{"cost":{"total":0.125}}}]}
+{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":1,"errorMessage":"overloaded"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.125}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Recovered."}],"stopReason":"stop","usage":{"cost":{"total":0.25}}}}
+{"type":"auto_retry_end","success":true,"attempt":1}
+{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","usage":{"cost":{"total":0.25}}}]}
+{"type":"agent_settled"}

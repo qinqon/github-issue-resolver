@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -64,11 +65,10 @@ func (r *ExecRunner) SetGHToken(token string) {
 // values (e.g. refreshed GH_TOKEN) shadow inherited ones.
 //
 // The child is started in its own process group (Setpgid) so that context
-// cancellation kills the entire tree (coding agents spawn subprocesses).
-// A WaitDelay gives the child a short grace period after the cancel signal
-// before the I/O pipes are forcibly closed.
-func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, name, args...)
+// cancellation signals descendants that remain in that group. cleanup must be
+// called after Run/Wait to stop escalation and kill any remaining group members.
+func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, args ...string) (cmd *exec.Cmd, cleanup func()) {
+	cmd = exec.CommandContext(ctx, name, args...)
 	cmd.Dir = workDir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -81,8 +81,10 @@ func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, a
 
 	// Send SIGTERM to the entire process group when the context is
 	// cancelled, giving children a chance to flush output and clean up.
-	// If the process hasn't exited by WaitDelay, Go closes the I/O
-	// pipes and Wait returns — the goroutine unblocks either way.
+	// Go's WaitDelay kills only the direct child, so escalate the group
+	// ourselves even if that child exits before its descendants.
+	var escalation *time.Timer
+	escalated := make(chan struct{})
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
@@ -92,10 +94,15 @@ func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, a
 		// (e.g. cost data) before exiting.
 		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 		// ESRCH means the process already exited between the context
-		// cancellation check and the kill call — treat as success.
+		// cancellation check and the kill call — treat as success without
+		// arming escalation that could signal a reused process group ID.
 		if errors.Is(err, syscall.ESRCH) {
 			return nil
 		}
+		escalation = time.AfterFunc(cmd.WaitDelay, func() {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			close(escalated)
+		})
 		return err
 	}
 
@@ -108,7 +115,17 @@ func (r *ExecRunner) command(ctx context.Context, workDir, stdin, name string, a
 		cmd.Env = append(cmd.Environ(), r.Env...)
 	}
 	r.mu.RUnlock()
-	return cmd
+	return cmd, func() {
+		// Run/Wait joins the context watcher, so Cancel has finished writing
+		// escalation. Never leave a timer that might later signal a reused PID.
+		if escalation != nil {
+			if escalation.Stop() {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			} else {
+				<-escalated
+			}
+		}
+	}
 }
 
 func (r *ExecRunner) Run(ctx context.Context, workDir, name string, args ...string) (stdout, stderr []byte, err error) {
@@ -116,7 +133,8 @@ func (r *ExecRunner) Run(ctx context.Context, workDir, name string, args ...stri
 }
 
 func (r *ExecRunner) RunWithStdin(ctx context.Context, workDir, stdin, name string, args ...string) (stdout, stderr []byte, err error) {
-	cmd := r.command(ctx, workDir, stdin, name, args...)
+	cmd, cleanup := r.command(ctx, workDir, stdin, name, args...)
+	defer cleanup()
 	stdout, err = cmd.Output()
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		stderr = exitErr.Stderr
@@ -125,11 +143,21 @@ func (r *ExecRunner) RunWithStdin(ctx context.Context, workDir, stdin, name stri
 }
 
 func (r *ExecRunner) RunStreamWithStdin(ctx context.Context, workDir, stdin string, onLine func(line []byte), name string, args ...string) (stdout, stderr []byte, err error) {
-	cmd := r.command(ctx, workDir, stdin, name, args...)
+	cmd, cleanup := r.command(ctx, workDir, stdin, name, args...)
+	defer cleanup()
 
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
+	}
+	// StdoutPipe returns an os.Pipe reader. Bound Scan independently of Wait:
+	// descendants can retain stdout after closing stderr, leaving no active
+	// os/exec copier to force the pipes closed when WaitDelay expires.
+	cancel := cmd.Cancel
+	cmd.Cancel = func() error {
+		cancelErr := cancel()
+		deadlineErr := pipe.(*os.File).SetReadDeadline(time.Now().Add(cmd.WaitDelay))
+		return errors.Join(cancelErr, deadlineErr)
 	}
 
 	var stderrBuf bytes.Buffer

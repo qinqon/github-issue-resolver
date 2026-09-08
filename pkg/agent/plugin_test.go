@@ -76,38 +76,190 @@ func TestReadPluginVersionFromFile_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestRequirePluginInstalled_Present(t *testing.T) {
-	// When the plugin is installed, RequirePluginInstalled returns the version.
-	fakeHome := t.TempDir()
-	pluginDir := filepath.Join(fakeHome, ".config", "opencode", "node_modules", "@opencode-ai", "plugin")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatal(err)
+// TestRequirePluginInstalled preserves the shipped SDK version-check API.
+func TestRequirePluginInstalled(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{name: "installed SDK", version: "1.15.13"},
+		{name: "missing SDK"},
 	}
-	if err := os.WriteFile(
-		filepath.Join(pluginDir, "package.json"),
-		[]byte(`{"name":"@opencode-ai/plugin","version":"1.15.13"}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", fakeHome)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			path := filepath.Join(home, ".config", "opencode", "node_modules", "@opencode-ai", "plugin", "package.json")
+			if tt.version != "" {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(`{"name":"@opencode-ai/plugin","version":"1.15.13"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	version, err := RequirePluginInstalled()
-	if err != nil {
-		t.Fatalf("expected no error when plugin is installed, got: %v", err)
-	}
-	if version != "1.15.13" {
-		t.Errorf("expected version 1.15.13, got %s", version)
+			version, err := RequirePluginInstalled()
+			if tt.version == "" {
+				if err == nil || !strings.Contains(err.Error(), path) {
+					t.Fatalf("expected error containing missing path %q, got %v", path, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if version != tt.version {
+				t.Errorf("expected version %q, got %q", tt.version, version)
+			}
+		})
 	}
 }
 
-func TestRequirePluginInstalled_Missing(t *testing.T) {
-	// When the plugin is not installed, RequirePluginInstalled returns an error.
-	t.Setenv("HOME", t.TempDir())
+// TestRequireOpenCodeSkills checks actual prompt resources, not SDK installation.
+func TestRequireOpenCodeSkills(t *testing.T) {
+	tests := []struct {
+		name       string
+		dirs       []string
+		badSkill   string
+		badContent string
+		directory  bool
+		sdkOnly    bool
+		wantErr    string
+	}{
+		{name: "plural", dirs: []string{"skills"}},
+		{name: "legacy singular", dirs: []string{"skill"}},
+		{name: "mixed locations", dirs: []string{"skills", "skill"}},
+		{name: "missing", wantErr: "ce-commit/SKILL.md"},
+		{name: "SDK is insufficient", sdkOnly: true, wantErr: "ce-commit/SKILL.md"},
+		{name: "empty skill", dirs: []string{"skills"}, badSkill: "ce-debug", wantErr: "ce-debug/SKILL.md"},
+		{name: "blank skill", dirs: []string{"skills"}, badSkill: "ce-resolve-pr-feedback", badContent: " \n", wantErr: "ce-resolve-pr-feedback/SKILL.md"},
+		{name: "directory is not a skill", dirs: []string{"skills"}, badSkill: "ce-debug", directory: true, wantErr: "ce-debug/SKILL.md"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("OPENCODE_CONFIG_DIR", "")
+			if tt.sdkOnly {
+				dir := filepath.Join(home, ".config", "opencode", "node_modules", "@opencode-ai", "plugin")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.15.13"}`), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(tt.dirs) > 0 {
+				for i, skill := range []string{"ce-commit", "ce-debug", "ce-resolve-pr-feedback"} {
+					path := filepath.Join(home, ".config", "opencode", tt.dirs[i%len(tt.dirs)], skill, "SKILL.md")
+					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					content := "# " + skill
+					if skill == tt.badSkill {
+						content = tt.badContent
+						if tt.directory {
+							if err := os.Mkdir(path, 0o755); err != nil {
+								t.Fatal(err)
+							}
+							continue
+						}
+					}
+					if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			err := RequireOpenCodeSkills()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
 
-	_, err := RequirePluginInstalled()
-	if err == nil {
-		t.Fatal("expected error when plugin is not installed")
+// TestRequireOpenCodeSkillsConfigDir follows CE installer root resolution and
+// never lets a default installation mask missing skills in an explicit root.
+func TestRequireOpenCodeSkillsConfigDir(t *testing.T) {
+	home := t.TempDir()
+	custom := filepath.Join(t.TempDir(), "custom config")
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultRoot := filepath.Join(home, ".config", "opencode")
+	tests := []struct {
+		name     string
+		envDir   string
+		root     string
+		legacy   bool
+		noHome   bool
+		badSkill bool
+	}{
+		{name: "empty uses default", root: defaultRoot},
+		{name: "blank uses default", envDir: " \n\t", root: defaultRoot},
+		{name: "custom plural", envDir: custom, root: custom},
+		{name: "custom legacy", envDir: custom, root: custom, legacy: true},
+		{name: "custom without HOME", envDir: custom, root: custom, noHome: true},
+		{name: "trimmed custom", envDir: " \t" + custom + "\n", root: custom},
+		{name: "relative custom", envDir: relative, root: custom},
+		{name: "home expansion", envDir: "~/custom config", root: filepath.Join(home, "custom config")},
+		{name: "native home expansion", envDir: "~" + string(filepath.Separator) + "custom config", root: filepath.Join(home, "custom config")},
+		{name: "bare home expansion", envDir: "~", root: home},
+		{name: "custom missing skill does not fall back", envDir: custom, root: custom, badSkill: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", home)
+			if tt.noHome {
+				t.Setenv("HOME", "")
+			}
+			t.Setenv("OPENCODE_CONFIG_DIR", tt.envDir)
+			roots := []string{tt.root}
+			if tt.badSkill {
+				roots = append(roots, defaultRoot)
+			}
+			for _, root := range roots {
+				dir := "skills"
+				if root == tt.root && tt.legacy {
+					dir = "skill"
+				}
+				for _, skill := range []string{"ce-commit", "ce-debug", "ce-resolve-pr-feedback"} {
+					if root == tt.root && tt.badSkill && skill == "ce-debug" {
+						continue
+					}
+					path := filepath.Join(root, dir, skill, "SKILL.md")
+					if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, []byte("# "+skill), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+							t.Error(err)
+						}
+					})
+				}
+			}
+			err := RequireOpenCodeSkills()
+			if tt.badSkill {
+				for _, want := range []string{"ce-debug/SKILL.md", filepath.Join(tt.root, "skills"), filepath.Join(tt.root, "skill")} {
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Errorf("error = %v, want %q", err, want)
+					}
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

@@ -7,12 +7,24 @@ Every flag has a corresponding environment variable. Flags take precedence over 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--repo` | `OOMPA_REPO` | -- | GitHub repo as `owner/repo` (required) |
-| `--agent` | `OOMPA_AGENT` | `opencode` | Coding agent backend: `claudecode` or `opencode` |
-| `--agent-model` | `OOMPA_AGENT_MODEL` | -- | Model override for OpenCode (e.g. `google-vertex-anthropic/claude-opus-4-6@default`) |
+| `--agent` | `OOMPA_AGENT` | `opencode` | Coding agent backend: `claudecode`, `opencode`, or optional `pi` |
+| `--agent-model` | `OOMPA_AGENT_MODEL` | -- | Model override for OpenCode or Pi, using the selected backend's model identifier |
 | `--agent-timeout` | `OOMPA_AGENT_TIMEOUT` | `30m` | Per-invocation timeout for coding agent runs (`0` = unlimited) |
 | `--label` | `OOMPA_LABEL` | `good-for-ai` | Issue label to watch |
 | `--clone-dir` | `OOMPA_CLONE_DIR` | `/tmp/oompa-work` | Working directory for clones and worktrees |
 | `--poll-interval` | `OOMPA_POLL_INTERVAL` | `2m` | How often to poll GitHub |
+
+## Pi Environment
+
+Pi uses the existing `--agent` and `--agent-model` options, not separate Pi flags. These additional environment variables configure its dependencies and runtime:
+
+| Env Var | Purpose |
+|---------|---------|
+| `OOMPA_CE_DIR` | Required absolute root of the full pinned CE checkout; no corresponding CLI flag or YAML key |
+| `PI_CODING_AGENT_DIR` | Optional Pi configuration/authentication directory; use the same value during login and service execution |
+| `ANTHROPIC_API_KEY` | Example provider credential; use the credentials appropriate to the selected Pi provider |
+
+Oompa supplies Pi's runtime flags automatically; they are not additional Oompa CLI options. See [Pi configuration](pi.md) for pinned dependencies, startup/resource restrictions, unattended policy, session cache, soft budget limits, and local runtime checks versus pending full live acceptance. OpenCode remains the default.
 
 ## Logging
 

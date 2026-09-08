@@ -2,8 +2,14 @@ package execx_test
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -230,4 +236,147 @@ func TestExecRunner_WaitDelayAllowsGracefulOutput(t *testing.T) {
 	if !strings.Contains(string(stdout), "AFTER") {
 		t.Errorf("expected post-signal output containing AFTER, got %q", stdout)
 	}
+}
+
+// Cancellation must bound stdout reads and stop TERM-resistant descendants,
+// even when the direct child exits gracefully before the grace period ends.
+func TestExecRunner_CancelStubbornDescendant(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		streaming   bool
+		detached    bool
+		closeOutput bool
+	}{
+		{name: "buffered"},
+		{name: "streaming", streaming: true},
+		{name: "streaming-detached", streaming: true, detached: true},
+		{name: "buffered-closed-output", closeOutput: true},
+		{name: "streaming-closed-output", streaming: true, closeOutput: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			ready := filepath.Join(dir, "ready")
+			r := &execx.ExecRunner{Env: []string{"EXECX_STUBBORN_READY=" + ready}}
+			if tt.detached {
+				r.Env = append(r.Env, "EXECX_STUBBORN_DETACH=1")
+			}
+			if tt.closeOutput {
+				r.Env = append(r.Env, "EXECX_STUBBORN_CLOSE_OUTPUT=1")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type result struct {
+				stdout []byte
+				err    error
+			}
+			done := make(chan result, 1)
+			go func() {
+				args := []string{"-c", `trap 'echo AFTER; exit 0' TERM; "$1" -test.run=^TestExecRunner_StubbornHelper$ & wait`, "sh", executable}
+				var stdout []byte
+				var runErr error
+				if tt.streaming {
+					stdout, _, runErr = r.RunStreamWithStdin(ctx, dir, "", nil, "sh", args...)
+				} else {
+					stdout, _, runErr = r.Run(ctx, dir, "sh", args...)
+				}
+				done <- result{stdout: stdout, err: runErr}
+			}()
+
+			var pid int
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				data, readErr := os.ReadFile(ready)
+				if readErr == nil {
+					pid, err = strconv.Atoi(string(data))
+					if err == nil {
+						break
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if pid == 0 {
+				t.Fatal("descendant did not become ready")
+			}
+			defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
+			start := time.Now()
+			cancel()
+			select {
+			case got := <-done:
+				t.Logf("returned after %s: %v", time.Since(start), got.err)
+				// Leave time for the liveness check below to fail before the
+				// 5s timer could hide a missing early cleanup kill.
+				if tt.closeOutput && time.Since(start) >= 2*time.Second {
+					t.Errorf("closed-output command did not return promptly before escalation")
+				}
+				if got.err == nil {
+					t.Error("expected cancellation error")
+				}
+				if !strings.Contains(string(got.stdout), "BEFORE\n") || !strings.Contains(string(got.stdout), "AFTER\n") {
+					t.Errorf("lost partial or graceful output: %q", got.stdout)
+				}
+			case <-time.After(8 * time.Second):
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+				select {
+				case <-done:
+				case <-time.After(time.Second):
+					t.Error("command did not return even after test cleanup")
+				}
+				t.Fatal("command still blocked 8s after cancellation (WaitDelay is 5s)")
+			}
+			if tt.detached {
+				// A new session escapes group signals. Returning still must be
+				// bounded by the stdout deadline; the test owns its cleanup.
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+
+			// Orphans may remain zombies until init reaps them; kill(0) alone
+			// cannot distinguish those from a surviving process.
+			deadline = time.Now().Add(time.Second)
+			for {
+				state, checkErr := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+				if _, exited := checkErr.(*exec.ExitError); checkErr != nil && !exited {
+					t.Fatalf("cannot check descendant state: %v", checkErr)
+				}
+				if checkErr != nil || strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("TERM-resistant descendant %d survived cancellation (state %q)", pid, state)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}
+
+func TestExecRunner_StubbornHelper(t *testing.T) {
+	ready := os.Getenv("EXECX_STUBBORN_READY")
+	if ready == "" {
+		return
+	}
+	signal.Ignore(syscall.SIGTERM)
+	if os.Getenv("EXECX_STUBBORN_DETACH") == "1" {
+		if _, err := syscall.Setsid(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Keep only stdout open: an active stderr copier can mask the Scan hang
+	// by causing os/exec's context watcher to close all pipes at WaitDelay.
+	_ = os.Stderr.Close()
+	fmt.Println("BEFORE")
+	if os.Getenv("EXECX_STUBBORN_CLOSE_OUTPUT") == "1" {
+		if err := os.Stdout.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(ready, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Self-terminate even if the test or runner fails to clean up.
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
 }

@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,8 +37,8 @@ func parseConfig() (cfg agent.Config, exitOnNewVersion, configPath string) {
 	flag.StringVar(&cfg.Label, "label", envOrDefault("OOMPA_LABEL", "good-for-ai"), "Issue label to watch")
 	flag.StringVar(&cfg.CloneDir, "clone-dir", envOrDefault("OOMPA_CLONE_DIR", "/tmp/oompa-work"), "Base directory for clones (owner/repo appended automatically)")
 	flag.DurationVar(&cfg.PollInterval, "poll-interval", parseDuration(envOrDefault("OOMPA_POLL_INTERVAL", "2m")), "Poll frequency")
-	flag.StringVar(&cfg.Agent, "agent", envOrDefault("OOMPA_AGENT", "opencode"), "Coding agent backend: claudecode or opencode")
-	flag.StringVar(&cfg.AgentModel, "agent-model", envOrDefault("OOMPA_AGENT_MODEL", ""), "Model override for OpenCode (ignored for Claude Code)")
+	flag.StringVar(&cfg.Agent, "agent", envOrDefault("OOMPA_AGENT", "opencode"), "Coding agent backend: claudecode, opencode, or pi")
+	flag.StringVar(&cfg.AgentModel, "agent-model", envOrDefault("OOMPA_AGENT_MODEL", ""), "Model override for OpenCode or Pi (not supported for Claude Code)")
 
 	agentTimeoutDefault := 30 * time.Minute
 	if raw := os.Getenv("OOMPA_AGENT_TIMEOUT"); raw != "" {
@@ -466,21 +467,48 @@ func setupAuth(cfg *agent.Config, logger *slog.Logger) (ghClient *agent.GoGitHub
 }
 
 // selectCodeAgent returns the appropriate CodeAgent implementation.
-func selectCodeAgent(cfg agent.Config, logger *slog.Logger) agent.CodeAgent {
+func selectCodeAgent(cfg agent.Config) (agent.CodeAgent, error) {
 	switch cfg.Agent {
 	case "claudecode":
 		if cfg.AgentModel != "" {
-			logger.Error("agent-model can only be used with agent: opencode", "model", cfg.AgentModel)
-			os.Exit(1)
+			return nil, fmt.Errorf("agent-model can only be used with agent: opencode or pi")
 		}
-		return &agent.ClaudeCodeAgent{Timeout: cfg.AgentTimeout}
+		return &agent.ClaudeCodeAgent{Timeout: cfg.AgentTimeout}, nil
 	case "opencode":
-		return &agent.OpenCodeAgent{Model: cfg.AgentModel, Timeout: cfg.AgentTimeout}
+		return &agent.OpenCodeAgent{Model: cfg.AgentModel, Timeout: cfg.AgentTimeout}, nil
+	case "pi":
+		return &agent.PiAgent{Model: cfg.AgentModel, Timeout: cfg.AgentTimeout}, nil
 	default:
-		logger.Error("unsupported agent backend", "agent", cfg.Agent)
-		os.Exit(1)
-		return nil
+		return nil, fmt.Errorf("invalid agent %q: must be claudecode, opencode, or pi", cfg.Agent)
 	}
+}
+
+// validateAgentConfigs checks all resolved backend/model combinations before
+// checking resources once per backend. No workers may start until it succeeds.
+func validateAgentConfigs(configs ...agent.Config) error {
+	for _, cfg := range configs {
+		if _, err := selectCodeAgent(cfg); err != nil {
+			return fmt.Errorf("%s/%s (%s): %w", cfg.Owner, cfg.Repo, cfg.Role, err)
+		}
+	}
+	checked := make(map[string]bool)
+	for _, cfg := range configs {
+		if checked[cfg.Agent] {
+			continue
+		}
+		var err error
+		switch cfg.Agent {
+		case "opencode":
+			err = agent.RequireOpenCodeSkills()
+		case "pi":
+			err = agent.RequirePiSkills()
+		}
+		if err != nil {
+			return fmt.Errorf("%s backend resources: %w", cfg.Agent, err)
+		}
+		checked[cfg.Agent] = true
+	}
+	return nil
 }
 
 // buildAgentForConfig creates a fully wired Agent for a given config.
@@ -505,7 +533,11 @@ func buildAgentForConfig(cfg agent.Config, ghClient *agent.GoGitHubClient, token
 		wtm.SetGitIdentity(cfg.GitAuthorName, cfg.GitAuthorEmail)
 	}
 
-	codeAgent := selectCodeAgent(cfg, logger)
+	codeAgent, err := selectCodeAgent(cfg)
+	if err != nil {
+		logger.Error("invalid agent configuration", "error", err)
+		os.Exit(1)
+	}
 
 	// Auto-detect Assisted-by trailer from agent backend when not explicitly set.
 	if cfg.AssistedBy == "" {
@@ -599,21 +631,6 @@ func main() {
 		emitter = eventServer
 	}
 
-	// Require the compound-engineering plugin to be installed when using the opencode backend.
-	// Fail fast at startup rather than running for weeks without skills.
-	// Only applies to opencode — claudecode has its own skill/tool system.
-	if cfg.Agent == "opencode" {
-		pluginVersion, err := agent.RequirePluginInstalled()
-		if err != nil {
-			logger.Error("compound-engineering plugin not installed — opencode requires @opencode-ai/plugin in ~/.config/opencode/",
-				"error", err,
-				"fix", "cd ~/.config/opencode && npm install @opencode-ai/plugin@latest",
-			)
-			os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
-		}
-		logger.Info("compound-engineering plugin found", "version", pluginVersion)
-	}
-
 	if configPath != "" {
 		// Multi-project mode
 		runMultiProject(cfg, configPath, ghClient, tokenFunc, useAppAuth, exitOnNewVersionOwner, exitOnNewVersionRepo, commitSHA, logger, emitter)
@@ -625,13 +642,8 @@ func main() {
 
 // runSingleRepo runs the original single-repo mode.
 func runSingleRepo(cfg agent.Config, ghClient *agent.GoGitHubClient, tokenFunc func(context.Context) (string, error), useAppAuth bool, exitOwner, exitRepo, commitSHA string, logger *slog.Logger, emitter agent.EventEmitter) {
-	// Validate agent backend
-	if cfg.Agent != "claudecode" && cfg.Agent != "opencode" {
-		fmt.Fprintf(os.Stderr, "invalid --agent %q: must be claudecode or opencode\n", cfg.Agent)
-		os.Exit(1)
-	}
-	if cfg.AgentModel != "" && cfg.Agent != "opencode" {
-		fmt.Fprintln(os.Stderr, "--agent-model can only be used with --agent opencode")
+	if err := validateAgentConfigs(cfg); err != nil {
+		logger.Error("invalid agent startup configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -658,7 +670,10 @@ func runSingleRepo(cfg agent.Config, ghClient *agent.GoGitHubClient, tokenFunc f
 	}
 
 	// Start daily plugin version checker (best-effort, only when Slack is configured)
-	checkerDone := agent.StartPluginVersionChecker(ctx, slack, logger)
+	var checkerDone <-chan struct{}
+	if cfg.Agent != "pi" {
+		checkerDone = agent.StartPluginVersionChecker(ctx, slack, logger)
+	}
 
 	runLoop(ctx, a, logger)
 
@@ -734,6 +749,14 @@ func runMultiProject(globalCfg agent.Config, configPath string, ghClient *agent.
 		logger.Error("no role entries generated from config file")
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
 	}
+	configs := make([]agent.Config, 0, len(entries))
+	for _, entry := range entries {
+		configs = append(configs, entry.Config)
+	}
+	if err := validateAgentConfigs(configs...); err != nil {
+		logger.Error("invalid agent startup configuration", "error", err)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional early exit in CLI startup
+	}
 
 	logger.Info("starting oompa (multi-project mode)",
 		"projects", len(fc.Projects),
@@ -792,7 +815,10 @@ func runMultiProject(globalCfg agent.Config, configPath string, ghClient *agent.
 	}
 
 	// Start daily plugin version checker (best-effort, only when Slack is configured)
-	checkerDone := agent.StartPluginVersionChecker(ctx, sharedSlack, logger)
+	var checkerDone <-chan struct{}
+	if slices.ContainsFunc(configs, func(cfg agent.Config) bool { return cfg.Agent != "pi" }) {
+		checkerDone = agent.StartPluginVersionChecker(ctx, sharedSlack, logger)
+	}
 
 	// In OneShot mode, wait for the initial plugin check to complete so the
 	// version notification is included in the Slack report before exit.

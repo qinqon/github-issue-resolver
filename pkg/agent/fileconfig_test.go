@@ -109,6 +109,9 @@ func TestLoadFileConfig_Validation(t *testing.T) {
 		{name: "triage_jobs_and_workflow", yaml: "projects:\n  - repo: owner/repo\n    triage:\n      - jobs: [\"https://ci.example.com/job1\"]\n        workflow: test.yml\n        lanes: [\"e2e*\"]\n", wantErr: true},
 		{name: "invalid_reaction", yaml: "projects:\n  - repo: owner/repo\n    prs:\n      - watch: [1]\n        reactions: [invalid]\n", wantErr: true},
 		{name: "invalid_agent", yaml: "agent: badagent\nprojects:\n  - repo: owner/repo\n    issues:\n      - label: test\n", wantErr: true},
+		{name: "pi", yaml: "agent: pi\nprojects:\n  - repo: owner/repo\n    issues: [{}]\n"},
+		{name: "pi_global_model", yaml: "agent: pi\nagent-model: anthropic/claude-sonnet-4-6\nprojects:\n  - repo: owner/repo\n    issues: [{}]\n"},
+		{name: "pi_project_model", yaml: "agent: pi\nprojects:\n  - repo: owner/repo\n    agent-model: anthropic/claude-sonnet-4-6\n    issues: [{}]\n"},
 		{name: "invalid_yaml", yaml: "{{invalid yaml", wantErr: true},
 		{
 			name: "unknown_keys_rejected",
@@ -1120,6 +1123,51 @@ func TestBuildRoleEntries_AgentModelTwoTierInheritance(t *testing.T) {
 	// Second project: inherits global (file-level overrides CLI-level)
 	if entries[3].Config.AgentModel != "global-model" {
 		t.Errorf("Inherited: expected 'global-model', got %q", entries[3].Config.AgentModel)
+	}
+}
+
+// TestBuildRoleEntries_Pi verifies YAML/CLI model and timeout inheritance for all roles.
+func TestBuildRoleEntries_Pi(t *testing.T) {
+	tests := []struct {
+		name        string
+		fileGlobals string
+		cliAgent    string
+		wantModel   string
+		wantTimeout time.Duration
+	}{
+		{"YAML selects Pi", "agent: pi\nagent-model: file-model\nagent-timeout: 45m\n", "opencode", "file-model", 45 * time.Minute},
+		{"CLI selects Pi", "", "pi", "cli-model", 30 * time.Minute},
+		{"Pi unlimited timeout", "agent: pi\nagent-timeout: 0s\n", "opencode", "cli-model", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fc, err := loadConfig(t, tt.fileGlobals+`projects:
+  - repo: org/override
+    agent-model: project-model
+    prs: [{watch: [1]}]
+    issues: [{}]
+    triage: [{jobs: [https://ci.example.com/job]}]
+  - repo: org/inherited
+    issues: [{}]
+`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries := BuildRoleEntries(fc, t.TempDir(), Config{Agent: tt.cliAgent, AgentModel: "cli-model", AgentTimeout: 30 * time.Minute})
+			if len(entries) != 4 {
+				t.Fatalf("expected 4 entries, got %d", len(entries))
+			}
+			for i, entry := range entries {
+				wantModel := "project-model"
+				if i == 3 {
+					wantModel = tt.wantModel
+				}
+				cfg := entry.Config
+				if cfg.Agent != "pi" || cfg.AgentModel != wantModel || cfg.AgentTimeout != tt.wantTimeout {
+					t.Errorf("entry %d: got backend/model/timeout %s/%s/%s, want pi/%s/%s", i, cfg.Agent, cfg.AgentModel, cfg.AgentTimeout, wantModel, tt.wantTimeout)
+				}
+			}
+		})
 	}
 }
 

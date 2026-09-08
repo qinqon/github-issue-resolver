@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// CodeAgent abstracts the CLI coding agent (Claude Code or OpenCode).
+// CodeAgent abstracts the CLI coding agent (Claude Code, OpenCode, or Pi).
 type CodeAgent interface {
 	Run(ctx context.Context, runner CommandRunner, workDir, prompt string,
 		logger *slog.Logger, resume bool) (AgentResult, error)

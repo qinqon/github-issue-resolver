@@ -1,0 +1,10 @@
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","name":"bash"}],"stopReason":"toolUse","usage":{"cost":{"total":0.25}}}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.0625}}}
+{"type":"message_update","usage":{"cost":{"total":0.125}}}
+{"type":"auto_retry_start","attempt":1,"errorMessage":"connection lost"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.125}}}
+{"type":"message_update","usage":{"cost":{"total":0.25}}}

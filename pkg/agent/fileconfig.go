@@ -116,16 +116,16 @@ func validateFileConfig(cfg *FileConfig) error {
 		return fmt.Errorf("no projects defined")
 	}
 
-	if cfg.Agent != "" && cfg.Agent != "claudecode" && cfg.Agent != "opencode" {
-		return fmt.Errorf("invalid agent %q: must be claudecode or opencode", cfg.Agent)
+	if cfg.Agent != "" && cfg.Agent != "claudecode" && cfg.Agent != "opencode" && cfg.Agent != "pi" {
+		return fmt.Errorf("invalid agent %q: must be claudecode, opencode, or pi", cfg.Agent)
 	}
 
 	if cfg.AgentModel != "" {
-		// agent-model is only valid with opencode. When agent is omitted in the
+		// agent-model is only valid with opencode or pi. When agent is omitted in the
 		// file config, it inherits the global config; the resolved combination
-		// is validated when the code agent is selected.
-		if cfg.Agent != "" && cfg.Agent != "opencode" {
-			return fmt.Errorf("agent-model can only be used with agent: opencode")
+		// is validated before workers start.
+		if cfg.Agent == "claudecode" {
+			return fmt.Errorf("agent-model can only be used with agent: opencode or pi")
 		}
 	}
 
@@ -179,10 +179,10 @@ func validateFileConfig(cfg *FileConfig) error {
 
 		// Validate project-level agent-model: incompatible with claudecode.
 		// When agent is omitted it inherits the global config; the resolved
-		// combination is validated when the code agent is selected.
+		// combination is validated before workers start.
 		if p.AgentModel != "" {
-			if cfg.Agent != "" && cfg.Agent != "opencode" {
-				return fmt.Errorf("project %d (%s): agent-model can only be used with agent: opencode", i, p.Repo)
+			if cfg.Agent == "claudecode" {
+				return fmt.Errorf("project %d (%s): agent-model can only be used with agent: opencode or pi", i, p.Repo)
 			}
 		}
 

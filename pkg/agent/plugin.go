@@ -73,12 +73,53 @@ func CheckPluginVersion(ctx context.Context, logger *slog.Logger) *SlackFinding 
 	}
 }
 
-// RequirePluginInstalled checks that the compound-engineering plugin is installed
-// in ~/.config/opencode/node_modules/. Returns the installed version on success,
-// or an error if the plugin is missing or unreadable.
-// Call this at startup to fail fast if the plugin is not present.
+// RequirePluginInstalled returns the installed OpenCode plugin SDK version from
+// ~/.config/opencode/node_modules/, or an error if it is missing or unreadable.
+//
+// Deprecated: Use RequireOpenCodeSkills to validate the CE skills required by
+// oompa. The SDK package alone does not install these skills.
 func RequirePluginInstalled() (string, error) {
 	return readInstalledPluginVersion()
+}
+
+// RequireOpenCodeSkills checks the CE skills referenced by oompa's prompts.
+// The OpenCode plugin SDK package alone does not install these skills.
+func RequireOpenCodeSkills() error {
+	// Match CE's installer: an explicit root replaces the default, with home
+	// expansion and relative paths resolved from the current working directory.
+	root := strings.TrimSpace(os.Getenv("OPENCODE_CONFIG_DIR"))
+	if root == "" || root == "~" || strings.HasPrefix(root, "~/") || strings.HasPrefix(root, "~"+string(filepath.Separator)) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("could not determine home directory: %w", err)
+		}
+		switch root {
+		case "":
+			root = filepath.Join(home, ".config", "opencode")
+		case "~":
+			root = home
+		default:
+			root = filepath.Join(home, root[2:])
+		}
+	}
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("could not resolve OpenCode config directory: %w", err)
+	}
+	for _, skill := range []string{"ce-commit", "ce-debug", "ce-resolve-pr-feedback"} {
+		found := false
+		for _, dir := range []string{"skills", "skill"} {
+			path := filepath.Join(root, dir, skill, "SKILL.md")
+			if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("required CE skill %s/SKILL.md missing, empty, or unreadable; install compound-engineering skills in %s (legacy %s also supported)", skill, filepath.Join(root, "skills"), filepath.Join(root, "skill"))
+		}
+	}
+	return nil
 }
 
 // readInstalledPluginVersion reads the installed plugin version from the
