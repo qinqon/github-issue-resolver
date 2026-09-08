@@ -36,8 +36,8 @@ type Config struct {
 	TriageLanePatterns []string      // glob patterns for matrix job names (lane-level filtering)
 	TriageLookback     time.Duration // time window to check for failed triage runs (0 = latest only)
 	Role               string        // role identifier: "prs", "issues", "triage" (set by BuildRoleEntries)
-	Agent              string        // coding agent backend: "claudecode" or "opencode"
-	AgentModel         string        // model override for OpenCode (empty = default)
+	Agent              string        // coding agent backend: "claudecode", "opencode", or "pi"
+	AgentModel         string        // model override for OpenCode or Pi (empty = default)
 	Version            string        // build version (commit SHA) for comment watermarks
 	SkipFix            bool          // when true, investigate and comment but never fix or push code changes
 	SkipComments       []string      // comment categories to suppress: ci-unrelated, ci-infrastructure, ci-related, conflict, rebase, flaky, issue-in-progress

@@ -87,3 +87,11 @@ export ANTHROPIC_VERTEX_PROJECT_ID="my-gcp-project"
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
+
+### Pi Authentication
+
+For the optional [Pi adapter](../configuration/pi.md), authenticate with Pi's interactive `/login` during setup, or provide the selected provider's environment variables, for example `ANTHROPIC_API_KEY` for Anthropic. Oompa's Pi invocation is unattended and must not stop to ask login or approval questions.
+
+Run setup under the same service identity and `HOME` used by Oompa. If you set `PI_CODING_AGENT_DIR` to relocate Pi's configuration/authentication directory, use the same absolute path for login and service execution. A login in your personal home is not automatically available to a systemd service or container. Inject provider keys through a protected environment file or Kubernetes Secret rather than baking credentials into an image.
+
+`PI_CODING_AGENT_DIR` is separate from Oompa's worktree-scoped Pi session cache. Give the runtime user the necessary access to its dedicated home/configuration and writable cache, without exposing another user's home or unrelated credentials. GitHub authentication and `gh auth setup-git` are still required independently of provider authentication.

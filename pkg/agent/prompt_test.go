@@ -111,7 +111,8 @@ func TestBuildReviewResponsePrompt(t *testing.T) {
 		"Post per-comment replies",
 		"Decline invalid suggestions",
 		"Resolve addressed review threads",
-		"skip step 7",
+		"Skip all skill workflow actions that commit, push, or amend",
+		"regardless of their position in the workflow",
 		"SCOPE CONSTRAINT",
 		"Files changed in this PR",
 		"handler.go | 5",
@@ -357,6 +358,37 @@ func TestBuildPeriodicCITriagePrompt(t *testing.T) {
 			t.Error("raw displayTitle angle brackets should not appear in prompt")
 		}
 	})
+}
+
+// TestBuildIssueMatchPromptPrefixes pins the shared routing prefixes and exact
+// opening text, including quoted names, without changing the prompt contract.
+func TestBuildIssueMatchPromptPrefixes(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		prompt string
+		prefix string
+		start  string
+	}{
+		{
+			name: "flaky", prompt: buildFlakyMatchPrompt(`test "unit"`, "failure", nil),
+			prefix: flakyMatchPromptPrefix, start: `A CI check named "test \"unit\""`,
+		},
+		{
+			name: "triage", prompt: buildTriageMatchPrompt(`test "unit"`, "failure", nil, nil),
+			prefix: triageMatchPromptPrefix, start: `A periodic CI job "test \"unit\""`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.HasPrefix(tt.prompt, tt.prefix) {
+				t.Errorf("prompt does not use shared prefix %q", tt.prefix)
+			}
+			opening, _, _ := strings.Cut(tt.prompt, "\n")
+			want := tt.start + " has failed. Determine if any of the existing issues below track the same or closely related failure."
+			if opening != want {
+				t.Errorf("opening = %q, want %q", opening, want)
+			}
+		})
+	}
 }
 
 func TestBuildFlakyMatchPrompt_RootCauseInstructions(t *testing.T) {

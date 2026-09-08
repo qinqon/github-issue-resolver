@@ -1,0 +1,5 @@
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.125}}}
+{"type":"message_update","usage":
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Must not be returned."}],"stopReason":"stop","usage":{"cost":{"total":0.25}}}}
+{"type":"agent_settled"}

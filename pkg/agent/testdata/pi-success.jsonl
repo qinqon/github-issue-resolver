@@ -1,0 +1,7 @@
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"streamed draft, not the final answer"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"private reasoning","text":"not answer text"},{"type":"text","text":"Fixed the bug.\n"},{"type":"toolCall","name":"bash","text":"not a tool answer","arguments":{"command":"go test ./..."}},{"type":"text","text":"Tests pass."}],"stopReason":"stop","usage":{"input":100,"output":20,"cacheRead":10,"cacheWrite":5,"cost":{"input":0.05,"output":0.05,"cacheRead":0.015,"cacheWrite":0.01,"total":0.125}}}}
+{"type":"agent_end","messages":[]}
+{"type":"agent_settled"}

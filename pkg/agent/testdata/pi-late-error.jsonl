@@ -1,0 +1,9 @@
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Premature success."}],"stopReason":"stop","usage":{"cost":{"total":0.125}}}}
+{"type":"agent_end","messages":[{"role":"assistant","stopReason":"stop","usage":{"cost":{"total":0.125}}}]}
+{"type":"agent_settled"}
+{"type":"auto_retry_start","attempt":1}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","usage":{"cost":{"total":0.0625}}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Partial failed answer."}],"stopReason":"error","errorMessage":"retry exhausted","usage":{"cost":{"total":0.25}}}}
+{"type":"auto_retry_end","success":false,"finalError":"retry exhausted"}
+{"type":"agent_settled"}

@@ -122,6 +122,17 @@ func (h *Harness) installFakeClaude() {
 // InstallFakeClaudeScript installs a specific fake-claude script from testdata/ as "claude".
 func (h *Harness) InstallFakeClaudeScript(scriptName string) {
 	h.t.Helper()
+	h.installFakeAgentScript("claude", scriptName)
+}
+
+// InstallFakePiScript installs the protocol-checking Pi fixture as "pi".
+func (h *Harness) InstallFakePiScript() {
+	h.t.Helper()
+	h.installFakeAgentScript("pi", "fake-pi.sh")
+}
+
+func (h *Harness) installFakeAgentScript(binary, scriptName string) {
+	h.t.Helper()
 
 	_, thisFile, _, _ := runtime.Caller(0)
 	srcScript := filepath.Join(filepath.Dir(thisFile), "testdata", scriptName)
@@ -131,9 +142,9 @@ func (h *Harness) InstallFakeClaudeScript(scriptName string) {
 		h.t.Fatalf("read %s: %v", scriptName, err)
 	}
 
-	dst := filepath.Join(h.binDir, "claude")
+	dst := filepath.Join(h.binDir, binary)
 	if err := os.WriteFile(dst, data, 0o755); err != nil {
-		h.t.Fatalf("write claude: %v", err)
+		h.t.Fatalf("write %s: %v", binary, err)
 	}
 }
 
@@ -167,10 +178,11 @@ func (h *Harness) writeGitConfig() {
 
 // RunOompaOpts configures optional arguments for RunOompa.
 type RunOompaOpts struct {
-	ExtraArgs []string // additional CLI flags
-	ExtraEnv  []string // additional environment variables
-	WatchPRs  []int    // --watch-prs values
-	Reactions []string // --reactions values
+	UseDefaultAgent bool     // omit the harness's claudecode flag to test CLI/YAML defaults
+	ExtraArgs       []string // additional CLI flags
+	ExtraEnv        []string // additional environment variables
+	WatchPRs        []int    // --watch-prs values
+	Reactions       []string // --reactions values
 }
 
 // RunOompa executes the oompa binary with the given FakeGitHub server URL.
@@ -184,10 +196,12 @@ func (h *Harness) RunOompa(githubURL string, opts ...RunOompaOpts) (stdout, stde
 		"--github-user", h.owner,
 		"--git-author-name", "e2e",
 		"--git-author-email", "e2e@example.com",
-		"--agent", "claudecode",
 		"--one-shot",
 		"--clone-dir", h.cloneDir,
 		"--log-level", "debug",
+	}
+	if len(opts) == 0 || !opts[0].UseDefaultAgent {
+		args = append(args, "--agent", "claudecode")
 	}
 
 	env := append(os.Environ(),

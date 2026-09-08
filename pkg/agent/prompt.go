@@ -5,6 +5,17 @@ import (
 	"strings"
 )
 
+// Prompt prefixes are the routing contract between builders and coding-agent backends.
+const (
+	implementationPromptPrefix   = "You are resolving GitHub issue #"
+	reviewResponsePromptPrefix   = "You are addressing review feedback on PR #"
+	ciFixPromptPrefix            = "CI is failing on PR #"
+	periodicCITriagePromptPrefix = "You are investigating a CI job failure."
+	changeSummaryPromptPrefix    = "Summarize the following code diff"
+	flakyMatchPromptPrefix       = "A CI check named "
+	triageMatchPromptPrefix      = "A periodic CI job "
+)
+
 func buildImplementationPrompt(issue Issue, signedOffBy, assistedBy string) string {
 	trailerInstructions := ""
 	lastStep := 4
@@ -19,7 +30,7 @@ func buildImplementationPrompt(issue Issue, signedOffBy, assistedBy string) stri
 		}
 	}
 
-	return fmt.Sprintf(`You are resolving GitHub issue #%d.
+	return fmt.Sprintf(implementationPromptPrefix+`%d.
 
 <user-provided-content>
 Title: %s
@@ -46,7 +57,7 @@ Do NOT push, create PRs, or amend — the agent handles that automatically.`,
 
 func buildReviewResponsePrompt(work IssueWork, comments []ReviewComment, reviews []PRReview, prComments []ReviewComment, owner, repo, prDiffStat string) string {
 	var prompt strings.Builder
-	fmt.Fprintf(&prompt, `You are addressing review feedback on PR #%d for issue #%d: %s
+	fmt.Fprintf(&prompt, reviewResponsePromptPrefix+`%d for issue #%d: %s
 Repository: %s/%s
 
 <user-provided-content>
@@ -123,7 +134,7 @@ There is NO fallback — if the skill does not reply to a thread, it will remain
 
 CRITICAL: Do NOT commit, push, or amend — the outer agent handles git operations automatically.
 If you make code changes, leave them UNCOMMITTED. Do NOT run "git add", "git commit", or "git push".
-Do NOT run "git push" even if the skill tries to — skip step 7 (commit/push) from the skill workflow.
+Skip all skill workflow actions that commit, push, or amend, regardless of their position in the workflow.
 
 COMMIT MESSAGE CHANGES: If asked to fix or change the commit message, write the full desired
 commit message (subject + body) to a file named ".oompa-commit-msg" in the repository root.
@@ -135,7 +146,7 @@ during the squash/amend step. Do NOT git add or commit the .oompa-commit-msg fil
 
 func buildCIFixPrompt(work IssueWork, failures []CheckRun, diff string, commits []Commit, skipFix bool) string {
 	var prompt strings.Builder
-	fmt.Fprintf(&prompt, `CI is failing on PR #%d for issue #%d: %s
+	fmt.Fprintf(&prompt, ciFixPromptPrefix+`%d for issue #%d: %s
 
 <user-provided-content>
 Failed checks:
@@ -325,7 +336,7 @@ classify as CODE_BUG, not FLAKY_TEST.
 `, sanitizeForPrompt(headBranch), sanitizeForPrompt(displayTitle))
 	}
 
-	return fmt.Sprintf(`You are investigating a CI job failure.
+	return fmt.Sprintf(periodicCITriagePromptPrefix+`
 
 Job: %s
 Run ID: %s
@@ -380,7 +391,7 @@ Instructions:
 // correlation context when multiple jobs failed in the same triage cycle.
 func buildIssueMatchPrompt(subject, contentLabel, content string, existingIssues []Issue, cycleFailedJobs []string) string {
 	var prompt strings.Builder
-	fmt.Fprintf(&prompt, `A %s has failed. Determine if any of the existing issues below track the same or closely related failure.
+	fmt.Fprintf(&prompt, `%s has failed. Determine if any of the existing issues below track the same or closely related failure.
 
 <user-provided-content>
 %s:
@@ -447,18 +458,18 @@ Instructions:
 
 func buildTriageMatchPrompt(jobName, analysis string, existingIssues []Issue, cycleFailedJobs []string) string {
 	return buildIssueMatchPrompt(
-		fmt.Sprintf("periodic CI job %q", jobName), "Analysis", analysis,
+		fmt.Sprintf(triageMatchPromptPrefix+"%q", jobName), "Analysis", analysis,
 		existingIssues, cycleFailedJobs)
 }
 
 func buildFlakyMatchPrompt(checkName, checkOutput string, existingIssues []Issue) string {
 	return buildIssueMatchPrompt(
-		fmt.Sprintf("CI check named %q", checkName), "Check output", checkOutput,
+		fmt.Sprintf(flakyMatchPromptPrefix+"%q", checkName), "Check output", checkOutput,
 		existingIssues, nil)
 }
 
 func buildChangeSummaryPrompt(diff string) string {
-	return fmt.Sprintf(`Summarize the following code diff as a concise bullet list. Each bullet should describe one logical change in a single sentence. Do not include file paths, stat numbers, or diff formatting. Focus on what was changed and why it matters.
+	return fmt.Sprintf(changeSummaryPromptPrefix+` as a concise bullet list. Each bullet should describe one logical change in a single sentence. Do not include file paths, stat numbers, or diff formatting. Focus on what was changed and why it matters.
 
 <diff>
 %s

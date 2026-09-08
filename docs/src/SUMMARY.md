@@ -12,6 +12,7 @@
 
 - [CLI Flags](configuration/cli-flags.md)
 - [Config File](configuration/config-file.md)
+- [Pi Backend](configuration/pi.md)
 - [Inheritance](configuration/inheritance.md)
 - [Examples](configuration/examples.md)
 

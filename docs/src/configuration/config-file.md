@@ -46,6 +46,23 @@ projects:
         flaky-label: ci-flake
 ```
 
+## Optional Pi Backend
+
+Select the implemented optional Pi backend with the existing `agent` and `agent-model` keys:
+
+```yaml
+agent: pi
+agent-model: "<provider/model>" # Replace with a model identifier available in Pi
+agent-timeout: 30m
+
+projects:
+  - repo: myorg/myrepo
+    issues:
+      - label: good-for-ai
+```
+
+Set `OOMPA_CE_DIR` in the process environment to the absolute root of the [pinned full CE checkout](../getting-started/installation.md#optional-pi). It is not a YAML key. Provider authentication must be available under the service's `HOME`/`PI_CODING_AGENT_DIR`, or through provider environment variables. No Pi extension or companion package is needed. See [Pi configuration](pi.md) for the runtime contract and validation limits; the default backend remains `opencode`.
+
 ## Project Fields
 
 | Field | Type | Description |

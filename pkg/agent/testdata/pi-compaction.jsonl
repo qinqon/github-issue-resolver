@@ -1,0 +1,8 @@
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"toolUse","usage":{"cost":{"total":0.125}}}}
+{"type":"compaction_start","reason":"threshold"}
+{"type":"compaction_end","aborted":false,"result":{"summary":"Compaction summary is not an answer.","usage":{"input":100,"output":20,"cost":{"total":0.25}}}}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Done after compaction."}],"stopReason":"stop","usage":{"cost":{"total":0.125}}}}
+{"type":"agent_settled"}

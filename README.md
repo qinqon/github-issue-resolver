@@ -1,6 +1,6 @@
 # oompa
 
-An autonomous AI-powered code maintenance agent that uses [OpenCode](https://opencode.ai) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to implement fixes, address reviews, resolve merge conflicts, fix CI failures, and triage flaky tests -- all without human intervention beyond the final merge.
+An autonomous AI-powered code maintenance agent that uses [OpenCode](https://opencode.ai), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or the optional [Pi backend](docs/src/configuration/pi.md) to implement fixes, address reviews, resolve merge conflicts, fix CI failures, and triage flaky tests -- all without human intervention beyond the final merge. OpenCode remains the default backend.
 
 ## What It Does
 
@@ -16,13 +16,38 @@ The coding agent never merges; a human must approve and merge every PR.
 ## Prerequisites
 
 - Go 1.26+
-- A coding agent CLI on `PATH`: either [OpenCode](https://opencode.ai) (recommended) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+- A coding agent CLI on `PATH`: [OpenCode](https://opencode.ai) (recommended), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), or optional Pi with the setup below
 - Provider credentials configured (e.g. `gcloud auth application-default login` for Vertex AI, or `ANTHROPIC_API_KEY` for direct API)
 - GitHub authentication: either `gh auth login` (recommended), a personal access token (PAT) with repo scope, or a GitHub App (see below)
 - `gh` CLI installed and configured as a git credential helper (`gh auth setup-git`)
-- [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) for CI investigation, review handling, and commit creation:
-  - OpenCode: `bunx @every-env/compound-plugin install compound-engineering --to opencode`
-  - Claude Code: `/plugin install compound-engineering` from the marketplace
+- [compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) for CI investigation, review handling, and commit creation
+
+For OpenCode, install CE with `bunx @every-env/compound-plugin install compound-engineering --to opencode`. For Claude Code, use `/plugin install compound-engineering` from the marketplace. Pi requires an explicit full CE checkout instead.
+
+### Optional Pi Setup
+
+The optional adapter is implemented for Pi `0.85.1` (`@earendil-works/pi-coding-agent`, Node.js `>=22.19.0`) and CE `caa3b231452a1cd444261d3c4d46bcd72d3246dd`. Local runtime checks exercised the actual adapter and Pi against a scripted localhost provider; full acceptance with a real model, CE scripts, and GitHub issue/review/CI workflows remains pending. See [validation status](docs/src/configuration/pi.md#pins-and-validation-status) for the scope of those checks.
+
+Install Node.js meeting that minimum first, plus Git, `gh`, Bash, `jq`, and Python 3 for CE scripts. Provision dependencies before starting the service, not during agent runs.
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@0.85.1
+git clone https://github.com/EveryInc/compound-engineering-plugin.git "$HOME/compound-engineering-plugin"
+git -C "$HOME/compound-engineering-plugin" checkout --detach caa3b231452a1cd444261d3c4d46bcd72d3246dd
+export OOMPA_CE_DIR="$HOME/compound-engineering-plugin"
+```
+
+`OOMPA_CE_DIR` must be the absolute checkout root, not a skills subdirectory. Oompa embeds full required skill bodies with location and script references intact; changing slash-command spelling is not a substitute. The official CE Pi package install, `pi install git:github.com/EveryInc/compound-engineering-plugin@caa3b231452a1cd444261d3c4d46bcd72d3246dd`, is available but does not replace this checkout requirement. No extension or companions are needed: `pi-subagents` and `pi-ask-user` are neither required nor loaded, and CE review uses its sequential fallback.
+
+Authenticate via Pi's interactive `/login` before starting Oompa, or supply a provider environment variable such as `ANTHROPIC_API_KEY`. Use the same service user, `HOME`, and `PI_CODING_AGENT_DIR` for login and execution. In a build containing the adapter, select it with the existing configuration:
+
+```bash
+oompa --agent pi --agent-model '<provider/model>' --repo myorg/myrepo
+```
+
+Oompa instructs Pi to run unattended with task-specific commit permissions and no pushing, PR creation, or merging; Oompa owns shipping. All automatic resource loading is disabled. Pi's `--offline` prevents startup package installs/network access, not provider calls, and `--no-approve` rejects project trust rather than granting permissions. These flags and the model policy are **not a sandbox**: model-issued Bash can execute arbitrary commands. Use a least-privilege isolated container, dedicated user/home, and no runtime package installs. The existing container image does not include Pi; use an optional custom derivation with the required Node version and pinned dependencies.
+
+See [Pi configuration](docs/src/configuration/pi.md) for session isolation, system policy, estimated costs, and the pending live acceptance checklist, and [deployment guidance](docs/src/operations/kubernetes.md#optional-pi-image) for container requirements.
 
 ## Build
 
@@ -66,8 +91,8 @@ To set up a GitHub App: create one in your org settings (`https://github.com/org
 | Flag | Env var | Default | Description |
 |------|---------|---------|-------------|
 | `--repo` | `OOMPA_REPO` | -- | GitHub repo as `owner/repo` (required) |
-| `--agent` | `OOMPA_AGENT` | `opencode` | Coding agent backend: `claudecode` or `opencode` |
-| `--agent-model` | `OOMPA_AGENT_MODEL` | -- | Model override for OpenCode (e.g. `google-vertex-anthropic/claude-opus-4-6@default`) |
+| `--agent` | `OOMPA_AGENT` | `opencode` | Coding agent backend: `claudecode`, `opencode`, or optional `pi` |
+| `--agent-model` | `OOMPA_AGENT_MODEL` | -- | Model override for OpenCode or Pi, using the selected backend's model identifier |
 | `--agent-timeout` | `OOMPA_AGENT_TIMEOUT` | `30m` | Per-invocation timeout for coding agent runs (`0` = unlimited) |
 | `--label` | `OOMPA_LABEL` | `good-for-ai` | Issue label to watch |
 | `--clone-dir` | `OOMPA_CLONE_DIR` | `/tmp/oompa-work` | Working directory for clones and worktrees |
@@ -100,9 +125,13 @@ To set up a GitHub App: create one in your org settings (`https://github.com/org
 
 `GITHUB_TOKEN` is optional -- if not set, oompa falls back to `gh auth token`. When all three `--github-app-*` flags are provided, the agent uses App auth instead.
 
+For Pi, also set `OOMPA_CE_DIR` to the absolute pinned CE checkout root. This is an environment variable, not a new CLI flag or YAML key.
+
 ## Running as a Systemd Service
 
 Oompa can run as a systemd user service that downloads the latest release binary on each (re)start. Use `RuntimeDirectory=` to isolate each unit and `--exit-on-new-version` to trigger a restart when a new release is published.
+
+For optional Pi, provision the pinned dependencies first and use a binary containing the adapter; do not assume the latest release includes it. Set `OOMPA_AGENT=pi` and `OOMPA_CE_DIR` in the service environment, preserve its authentication home, and follow the [Pi systemd guidance](docs/src/operations/systemd.md#optional-pi-service).
 
 Store provider credentials in `~/.config/oompa/env`:
 
@@ -206,7 +235,7 @@ cmd/oompa/          CLI entry point
 pkg/agent/          Core logic (loop, state, GitHub client, agent runner, worktree, prompts)
 ```
 
-The coding agent only creates PRs -- it never merges. No force-pushes. On failure, the issue is labeled `ai-failed` with a comment explaining the error; a human removes the label and re-adds `good-for-ai` to retry. Billing is controlled through GCP IAM on the Vertex AI project.
+Oompa orchestrates pushes and PR creation; coding-agent policy prohibits merging or force-pushing. For Pi, the model is also instructed not to push or create PRs via `--append-system-prompt`. These Pi instructions are model policy, not a technical boundary: `ExecRunner` can execute arbitrary commands and has no command denylist. Enforcing these restrictions requires external permission controls or an execution layer that denies the actions. On failure, the issue is labeled `ai-failed` with a comment explaining the error; a human removes the label and re-adds `good-for-ai` to retry. Configure billing controls at the provider. Pi costs are reported estimates, not billing measurements; missing pricing and unreported usage, including interrupted compaction, can undercount costs even on failed calls. Oompa's budget is a soft check between calls, not a billing cap. See [costs and budgets](docs/src/configuration/pi.md#costs-and-budgets).
 
 ## Acknowledgments
 
